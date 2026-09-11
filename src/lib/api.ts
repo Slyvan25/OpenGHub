@@ -1,0 +1,113 @@
+/**
+ * Typed bindings for the Rust commands.
+ *
+ * Under `tauri dev` these hit the real backend. Opened in a plain browser
+ * (`npm run dev`) there is no IPC bridge, so every call is served by the mock in
+ * `mock.ts` — that keeps the UI workable without hardware or a Rust build.
+ */
+import type {
+  BatteryEvent,
+  Config,
+  Device,
+  DeviceListPayload,
+  DeviceProfile,
+  DpiState,
+  FeatureInfo,
+  LightingRequest,
+  ReportRateState,
+  Settings,
+  ZoneInfo,
+} from "./types";
+
+export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
+type Handler = (payload: unknown) => void;
+
+async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  if (!isTauri) {
+    const { mockInvoke } = await import("./mock");
+    return mockInvoke<T>(command, args ?? {});
+  }
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<T>(command, args);
+}
+
+/** Subscribes to a backend event; resolves to an unsubscribe function. */
+export async function on<T>(event: string, handler: (payload: T) => void): Promise<() => void> {
+  if (!isTauri) {
+    const { mockListen } = await import("./mock");
+    return mockListen(event, handler as Handler);
+  }
+  const { listen } = await import("@tauri-apps/api/event");
+  const unlisten = await listen<T>(event, (e) => handler(e.payload));
+  return unlisten;
+}
+
+export const events = {
+  devicesChanged: "devices-changed",
+  batteryUpdate: "battery-update",
+  deviceUpdated: "device-updated",
+} as const;
+
+// -- devices ---------------------------------------------------------------
+
+export const getConnectedDevices = (refresh = true) =>
+  call<DeviceListPayload>("get_connected_devices", { refresh });
+
+export const getDeviceState = (deviceId: string) =>
+  call<Device>("get_device_state", { deviceId });
+
+export const getDeviceFeatures = (deviceId: string) =>
+  call<FeatureInfo[]>("get_device_features", { deviceId });
+
+export const setDeviceDpi = (deviceId: string, dpi: number) =>
+  call<DpiState>("set_device_dpi", { deviceId, dpi });
+
+export const setPollingRate = (deviceId: string, rateHz: number) =>
+  call<ReportRateState>("set_polling_rate", { deviceId, rateHz });
+
+export const setDeviceLighting = (request: LightingRequest) =>
+  call<void>("set_device_lighting", { request });
+
+export const getLightingZones = (deviceId: string) =>
+  call<ZoneInfo[]>("get_lighting_zones", { deviceId });
+
+export const readBatteries = () => call<BatteryEvent[]>("read_batteries");
+
+export const setDemoMode = (enabled: boolean) =>
+  call<DeviceListPayload>("set_demo_mode", { enabled });
+
+// -- profiles & settings ---------------------------------------------------
+
+export const getConfig = () => call<Config>("get_config");
+export const saveConfig = (config: Config) => call<Config>("save_config", { config });
+export const setActiveProfile = (profileId: string) =>
+  call<Config>("set_active_profile", { profileId });
+export const createProfile = (name: string, kind = "game") =>
+  call<Config>("create_profile", { name, kind });
+export const deleteProfile = (profileId: string) =>
+  call<Config>("delete_profile", { profileId });
+export const saveDeviceProfile = (deviceId: string, profile: DeviceProfile) =>
+  call<Config>("save_device_profile", { deviceId, profile });
+export const getDeviceProfile = (deviceId: string) =>
+  call<DeviceProfile>("get_device_profile", { deviceId });
+export const saveSettings = (settings: Settings) => call<Config>("save_settings", { settings });
+export const getConfigPath = () => call<string>("get_config_path");
+
+// -- artwork ---------------------------------------------------------------
+
+export const getArtwork = () => call<Record<string, string>>("get_artwork");
+export const getArtworkDir = () => call<string>("get_artwork_dir");
+
+// -- window ----------------------------------------------------------------
+
+export const windowMinimize = () => call<void>("window_minimize");
+export const windowToggleMaximize = () => call<boolean>("window_toggle_maximize");
+export const windowClose = () => call<void>("window_close");
+
+/** Normalises a rejected IPC promise into a readable message. */
+export function errorMessage(error: unknown): string {
+  if (typeof error === "string") return error;
+  if (error instanceof Error) return error.message;
+  return String(error);
+}

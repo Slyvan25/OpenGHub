@@ -1,0 +1,69 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "OpenGHub",
+  "version": "0.1.0",
+  "identifier": "com.openghub.app",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "OpenGHub",
+        "label": "main",
+        "width": 1440,
+        "height": 810,
+        "minWidth": 1040,
+        "minHeight": 660,
+        "decorations": false,
+        "transparent": false,
+        "resizable": true,
+        "center": true,
+        "dragDropEnabled": false,
+        "backgroundColor": "#000000"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: http://asset.localhost; font-src 'self'; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'none'",
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$DATA/openghub/devices/*"
+        ]
+      }
+    },
+    "withGlobalTauri": false
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "deb",
+      "rpm"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "Utility",
+    "shortDescription": "Open source Logitech G HUB for Linux",
+    "longDescription": "OpenGHub configures Logitech gaming peripherals over HID++ 2.0: DPI, polling rate, lighting and battery, with G HUB's interface.",
+    "linux": {
+      "deb": {
+        "depends": [
+          "libudev1"
+        ]
+      },
+      "rpm": {
+        "depends": [
+          "systemd-libs"
+        ]
+      }
+    }
+  }
+}

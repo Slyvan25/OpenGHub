@@ -1,0 +1,146 @@
+/* ---------------------------------------------------------------------------
+   OpenGHub design tokens.
+   Values are matched against G HUB's dark theme: a true-black canvas, near-black
+   cards, a single cyan-blue accent and a three-step grey text ramp.
+   --------------------------------------------------------------------------- */
+:root {
+  --bg: #000000;
+  --surface: #1b1b1b;
+  --surface-hover: #212121;
+  --surface-2: #262626;
+  --surface-3: #323232;
+  --line: #2b2b2b;
+  --line-strong: #3a3a3a;
+
+  --text: #ffffff;
+  --text-dim: #8a8a8a;
+  --text-dimmer: #5c5c5c;
+
+  --accent: #1a82e2;
+  --accent-hover: #2b90ec;
+  --accent-soft: rgba(26, 130, 226, 0.16);
+  --cyan: #00b5e2;
+  --danger: #e0483b;
+  --warning: #e8a33d;
+  --success: #43c07a;
+
+  --radius-sm: 4px;
+  --radius: 8px;
+  --radius-lg: 12px;
+  --radius-pill: 999px;
+
+  --titlebar-h: 32px;
+  --topbar-h: 56px;
+  /* The dashboard sits in a centred column with generous gutters, like G HUB. */
+  --content-max: 1240px;
+  --content-pad: 24px;
+
+  /* G HUB ships a geometric sans; fall back through the closest widely
+     installed faces rather than pulling a webfont at runtime. */
+  --font: "Rajdhani", "Barlow", "Montserrat", "Inter", "Segoe UI",
+    "DejaVu Sans", system-ui, sans-serif;
+  --font-ui: "Inter", "Segoe UI", "Noto Sans", "DejaVu Sans", system-ui, sans-serif;
+
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  cursor: default;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Scrollbars, matched to the dark canvas. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--surface-3);
+  border-radius: var(--radius-pill);
+  border: 3px solid var(--bg);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--line-strong);
+}
+
+/* Shared helpers -------------------------------------------------------- */
+.muted {
+  color: var(--text-dim);
+}
+
+.section-title {
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.card {
+  background: var(--surface);
+  border-radius: var(--radius);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -1,0 +1,22 @@
+# OpenGHub — grant the logged-in desktop user access to Logitech HID++ endpoints.
+#
+# Install:
+#   sudo cp packaging/70-openghub.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules
+#   sudo udevadm trigger --action=add --subsystem-match=hidraw
+# then unplug and reconnect the device (or its receiver).
+#
+# THE FILENAME NUMBER MATTERS. `TAG+="uaccess"` does not itself grant anything:
+# systemd's /usr/lib/udev/rules.d/73-seat-late.rules is what applies the ACL,
+# via `TAG=="uaccess", RUN{builtin}+="uaccess"`. udev evaluates rule files in
+# lexical order, so a tag set by a `99-` file is added *after* 73 has already
+# tested for it — the tag shows up in `udevadm info` but no ACL is ever applied.
+# Anything below 73 works; 70 matches systemd's own 70-uaccess.rules.
+#
+# `uaccess` hands the device to whoever is logged in at the seat, which is safer
+# than a world-readable 0666 node.
+
+# Every Logitech HID++ endpoint. ATTRS{} walks up the device's parents, so this
+# covers both directly attached devices and anything behind a Unifying /
+# LIGHTSPEED / Bolt receiver, whose hidraw node hangs off the receiver.
+KERNEL=="hidraw*", ATTRS{idVendor}=="046d", TAG+="uaccess"

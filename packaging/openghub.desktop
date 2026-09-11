@@ -1,0 +1,12 @@
+#!/usr/bin/env xdg-open
+[Desktop Entry]
+Type=Application
+Name=OpenGHub
+GenericName=Logitech G Configuration
+Comment=Configure Logitech gaming peripherals over HID++
+Exec=openghub
+Icon=openghub
+Terminal=false
+Categories=Utility;Settings;HardwareSettings;
+Keywords=logitech;g hub;mouse;keyboard;dpi;rgb;lighting;
+StartupWMClass=OpenGHub

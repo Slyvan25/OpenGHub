@@ -1,0 +1,46 @@
+[package]
+name = "openghub"
+version = "0.1.0"
+description = "OpenGHub — an open source, Linux-native reimplementation of Logitech G HUB"
+authors = ["OpenGHub contributors"]
+edition = "2021"
+rust-version = "1.77"
+license = "MIT"
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+name = "openghub_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset", "tray-icon", "image-png"] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+
+# HID transport. The `linux-static-hidraw` default feature builds the vendored
+# hidraw backend, so the only system requirement on Linux is libudev.
+hidapi = { version = "2", default-features = false, features = ["linux-static-hidraw"] }
+
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+parking_lot = "0.12"
+log = "0.4"
+env_logger = "0.11"
+directories = "5"
+
+# The `probe` example links against the lib and needs hidapi directly.
+[dev-dependencies]
+hidapi = { version = "2", default-features = false, features = ["linux-static-hidraw"] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true
