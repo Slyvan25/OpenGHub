@@ -72,6 +72,20 @@ export const setDeviceLighting = (request: LightingRequest) =>
 export const getLightingZones = (deviceId: string) =>
   call<ZoneInfo[]>("get_lighting_zones", { deviceId });
 
+// -- onboard profiles ------------------------------------------------------
+
+/** Writes macro bindings to the device. Returns the backup path taken first. */
+export const applyOnboardMacros = (
+  deviceId: string,
+  assignments: { button: number; steps: import("$lib/macros").MacroStep[] }[],
+) => call<string>("apply_onboard_macros", { deviceId, assignments });
+
+export const backupOnboardMemory = (deviceId: string) =>
+  call<string>("backup_onboard_memory", { deviceId });
+
+export const restoreOnboardMemory = (deviceId: string, path: string) =>
+  call<number>("restore_onboard_memory", { deviceId, path });
+
 export const readBatteries = () => call<BatteryEvent[]>("read_batteries");
 
 export const setDemoMode = (enabled: boolean) =>

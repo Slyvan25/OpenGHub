@@ -129,6 +129,12 @@ export interface Assignment {
   value: string;
 }
 
+export interface MacroDef {
+  id: string;
+  name: string;
+  steps: import("$lib/macros").MacroStep[];
+}
+
 export interface DeviceProfile {
   dpiStages: number[];
   activeStage: number;
@@ -137,6 +143,8 @@ export interface DeviceProfile {
   /** Per-zone settings, keyed by zone index. */
   lightingZones: Record<string, LightingSettings>;
   assignments: Assignment[];
+  /** Recorded macros, referenced by assignments with category `macro`. */
+  macros: MacroDef[];
 }
 
 export interface Profile {

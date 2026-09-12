@@ -8,6 +8,9 @@
    * pretending the change reached the hardware.
    */
   import { untrack } from "svelte";
+  import * as api from "$lib/api";
+  import MacroRecorder from "$lib/components/MacroRecorder.svelte";
+  import { encodedSize, type MacroDef } from "$lib/macros";
   import DeviceArt from "$lib/components/DeviceArt.svelte";
   import DeviceWorkspace from "$lib/components/DeviceWorkspace.svelte";
   import Icon, { type IconName } from "$lib/components/Icon.svelte";
@@ -128,7 +131,9 @@
     seededFor = id;
 
     untrack(() => {
-      assignments = [...configStore.deviceProfile(id).assignments];
+      const profile = configStore.deviceProfile(id);
+      assignments = [...profile.assignments];
+      macros = [...(profile.macros ?? [])];
       // The control set depends on the device kind, so pick a valid default.
       if (!controls.some((c) => c.id === selected)) selected = controls[0]?.id ?? "";
     });
@@ -190,6 +195,98 @@
 
   /** Which library group the panel is showing, like G HUB's sub-tabs. */
   let group = $state("Commands");
+
+  // -- macros ---------------------------------------------------------------
+
+  let macros = $state<MacroDef[]>([]);
+  let editing = $state<string | null>(null);
+  let writing = $state(false);
+
+  /**
+   * Physical button index for a control id, which is what the device's profile
+   * stores. `button-1` is index 0; wheel tilts are not addressable this way.
+   */
+  function buttonIndexFor(controlId: string): number | null {
+    const m = /^button-(\d+)$/.exec(controlId);
+    return m ? Number(m[1]) - 1 : null;
+  }
+
+  const macroBudget = 253;
+  const macroBytes = $derived(
+    assignments
+      .filter((a) => a.category === "macro")
+      .reduce((total, a) => {
+        const def = macros.find((m) => m.id === a.value);
+        return total + (def ? encodedSize(def.steps) : 0);
+      }, 0),
+  );
+
+  function newMacro() {
+    const def: MacroDef = { id: `m${Date.now()}`, name: `Macro ${macros.length + 1}`, steps: [] };
+    macros = [...macros, def];
+    editing = def.id;
+    persistMacros();
+  }
+
+  function updateMacro(next: MacroDef) {
+    macros = macros.map((m) => (m.id === next.id ? next : m));
+    persistMacros();
+  }
+
+  function deleteMacro(id: string) {
+    macros = macros.filter((m) => m.id !== id);
+    assignments = assignments.filter((a) => !(a.category === "macro" && a.value === id));
+    if (editing === id) editing = null;
+    persistMacros();
+  }
+
+  async function persistMacros() {
+    const profile = configStore.deviceProfile(device.id);
+    await configStore.saveDeviceProfile(device.id, { ...profile, macros, assignments });
+  }
+
+  /** Binds a macro to the selected control and writes it to the device. */
+  async function assignMacro(def: MacroDef) {
+    const index = buttonIndexFor(selected);
+    if (index === null) {
+      ui.toast("That control cannot hold a macro — pick a numbered button.", "error");
+      return;
+    }
+    if (def.steps.length === 0) {
+      ui.toast("Record some keys first.", "error");
+      return;
+    }
+
+    const next = assignments.filter((a) => a.control !== selected);
+    next.push({ control: selected, category: "macro", label: def.name, value: def.id });
+    assignments = next;
+    await persistMacros();
+    await writeToDevice();
+  }
+
+  /** Renders every macro binding into the device's onboard memory. */
+  async function writeToDevice() {
+    if (!device.capabilities.onboardMemory) {
+      ui.toast("This device has no onboard memory to store macros in.", "error");
+      return;
+    }
+    writing = true;
+    try {
+      const payload = assignments
+        .filter((a) => a.category === "macro")
+        .flatMap((a) => {
+          const index = buttonIndexFor(a.control);
+          const def = macros.find((m) => m.id === a.value);
+          return index !== null && def ? [{ button: index, steps: def.steps }] : [];
+        });
+      const backup = await api.applyOnboardMacros(device.id, payload);
+      ui.toast(`Written to the device. Backup: ${backup.split("/").pop()}`, "success", 5000);
+    } catch (e) {
+      ui.toast(`Could not write macros: ${api.errorMessage(e)}`, "error", 7000);
+    } finally {
+      writing = false;
+    }
+  }
   const spots = $derived(controlSpots(device.kind));
   /** Only controls we have a position for can be drawn on the render. */
   const placed = $derived(controls.filter((c) => spots[c.id]));
@@ -199,7 +296,7 @@
 <DeviceWorkspace title="Assignments">
   {#snippet panel()}
     <div class="group-tabs" role="tablist">
-      {#each library as g (g.name)}
+      {#each [...library, { name: "Macros" }] as g (g.name)}
         <button
           class="group-tab"
           class:active={g.name === group}
@@ -219,6 +316,51 @@
       <input type="text" placeholder="Search for a command" bind:value={search} spellcheck="false" />
     </label>
 
+    {#if group === "Macros"}
+      <div class="macros">
+        {#each macros as def (def.id)}
+          <div class="macro">
+            <button class="macro-row" onclick={() => assignMacro(def)}>
+              <span class="macro-name">{def.name}</span>
+              <span class="macro-meta">{def.steps.length} steps</span>
+            </button>
+            <button
+              class="icon"
+              onclick={() => (editing = editing === def.id ? null : def.id)}
+              aria-label="Edit macro"
+            >
+              <Icon name="pencil" size={13} />
+            </button>
+            <button class="icon" onclick={() => deleteMacro(def.id)} aria-label="Delete macro">
+              <Icon name="trash" size={13} />
+            </button>
+          </div>
+          {#if editing === def.id}
+            <MacroRecorder
+              macro={def}
+              budget={macroBudget}
+              onchange={updateMacro}
+              onclose={() => (editing = null)}
+            />
+          {/if}
+        {:else}
+          <p class="hint">No macros yet.</p>
+        {/each}
+
+        <button class="new-macro" onclick={newMacro}>
+          <Icon name="plus" size={14} /> New macro
+        </button>
+
+        <p class="hint">
+          Click a macro to bind it to <strong>{controlLabel(selected)}</strong> and write it to
+          the device. Using {macroBytes}/{macroBudget} bytes of the macro sector.
+        </p>
+        <button class="new-macro" onclick={writeToDevice} disabled={writing}>
+          <Icon name="chip" size={14} />
+          {writing ? "Writing…" : "Re-write macros to device"}
+        </button>
+      </div>
+    {:else}
     <div class="commands">
       {#if activeGroup}
         {#each activeGroup.items as item (item.label)}
@@ -237,12 +379,13 @@
         <p class="hint">No commands match “{search}”.</p>
       {/if}
     </div>
+    {/if}
 
     <p class="hint foot">
-      Assigning to <strong>{controlLabel(selected)}</strong>. Bindings are saved to
-      <strong>{configStore.active?.name}</strong>, but are <strong>not written to the device
-      yet</strong> — that needs the onboard profile memory (<code>0x8100</code>) on this
-      hardware, or <code>0x1b04</code> on devices that expose it.
+      Assigning to <strong>{controlLabel(selected)}</strong>. Macros are written into the
+      device's onboard memory (<code>0x8100</code>) and a backup is taken first. Other command
+      types are stored in <strong>{configStore.active?.name}</strong> only, and do not reach the
+      hardware yet.
     </p>
   {/snippet}
 
@@ -392,6 +535,82 @@
 
   .clear-command .command-key {
     color: var(--text-dimmer);
+  }
+
+  .macros {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .macro {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .macro-row {
+    flex: 1;
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 9px 10px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--surface-2);
+    text-align: left;
+  }
+
+  .macro-row:hover {
+    border-color: var(--cyan);
+  }
+
+  .macro-name {
+    flex: 1;
+    font-family: var(--font);
+    font-size: 13.5px;
+    font-weight: 600;
+  }
+
+  .macro-meta {
+    font-size: 11px;
+    color: var(--text-dimmer);
+  }
+
+  .new-macro {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 9px;
+    border: 1px dashed var(--line-strong);
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  .new-macro:hover:not(:disabled) {
+    color: var(--text);
+    border-color: var(--text-dim);
+  }
+
+  .new-macro:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .icon {
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    border-radius: var(--radius-sm);
+    color: var(--text-dimmer);
+  }
+
+  .icon:hover {
+    background: var(--surface-3);
+    color: var(--text);
   }
 
   .callouts {

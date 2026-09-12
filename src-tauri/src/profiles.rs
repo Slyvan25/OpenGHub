@@ -35,6 +35,17 @@ impl Default for LightingSettings {
     }
 }
 
+/// A macro the user has recorded. Stored here rather than on the device, so
+/// OpenGHub can rebuild the device's macro sector from scratch every time and
+/// never leaves orphaned macros behind.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MacroDef {
+    pub id: String,
+    pub name: String,
+    pub steps: Vec<crate::hidpp::onboard::MacroStep>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Assignment {
@@ -66,6 +77,9 @@ pub struct DeviceProfile {
     pub lighting_zones: std::collections::HashMap<String, LightingSettings>,
     #[serde(default)]
     pub assignments: Vec<Assignment>,
+    /// Recorded macros, referenced by assignments whose category is `macro`.
+    #[serde(default)]
+    pub macros: Vec<MacroDef>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -249,6 +263,7 @@ mod tests {
                 lighting: Some(LightingSettings::default()),
                 lighting_zones: Default::default(),
                 assignments: vec![],
+                macros: vec![],
             },
         );
         let text = serde_json::to_string(&cfg).unwrap();

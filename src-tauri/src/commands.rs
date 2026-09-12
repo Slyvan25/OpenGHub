@@ -408,6 +408,31 @@ pub async fn get_onboard_profiles(
     Ok(OnboardProfiles { info, profiles })
 }
 
+/// Writes the profile's macro bindings into the device's onboard memory.
+///
+/// Takes a backup first — this modifies the live profile, and a bad write would
+/// otherwise be unrecoverable.
+#[tauri::command]
+pub async fn apply_onboard_macros(
+    manager: State<'_, DeviceManager>,
+    device_id: String,
+    assignments: Vec<crate::hidpp::onboard::MacroAssignment>,
+) -> Result<String> {
+    let backup = manager.backup_onboard(&device_id)?;
+    manager.apply_onboard_macros(&device_id, assignments)?;
+    Ok(backup.display().to_string())
+}
+
+/// Restores onboard memory from a backup file.
+#[tauri::command]
+pub async fn restore_onboard_memory(
+    manager: State<'_, DeviceManager>,
+    device_id: String,
+    path: String,
+) -> Result<usize> {
+    manager.restore_onboard(&device_id, std::path::Path::new(&path))
+}
+
 // ---------------------------------------------------------------------------
 // Device artwork
 // ---------------------------------------------------------------------------

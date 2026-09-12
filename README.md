@@ -18,7 +18,8 @@ kernel module, no proprietary daemon.
 | Feature enumeration & diagnostics (`0x0001`) | ✅ |
 | Profiles, per-device settings, persistence | ✅ |
 | RGB lighting (`0x8070`) | ✅ per zone: off / fixed / breathing / colour cycle |
-| Button remapping | ⚠️ UI and profile storage only; nothing is written to the device yet |
+| Macros on onboard memory (`0x8100`) | ✅ recorded, written to device flash, backed up first |
+| Button remapping (non-macro) | ⚠️ UI and profile storage only; not written to the device yet |
 | Onboard profile memory (`0x8100`) | ❌ detected but not edited |
 
 ## Requirements
@@ -94,6 +95,30 @@ the device reverts to its onboard profile on reconnect — so it cannot be taken
 OpenGHub therefore takes host mode lazily: lighting always claims it up front, because a
 silently-dropped write gives nothing to react to, while DPI and report rate only claim it after
 a write is actually refused. A device that is happy in onboard mode is left alone.
+
+### Onboard memory and macros
+
+Macros are written into the device's own flash, so they keep working with OpenGHub closed.
+The format was established by reading a real G502 rather than from documentation:
+
+- Memory is **sectors of 255 bytes** — not 256. A 16-byte read or write may not cross the end,
+  so the last access of a sector is end-aligned and overlaps the previous one. `memoryAddrWrite`
+  must declare *exactly* the sector size; rounding up to 256 is rejected as "invalid argument".
+- Every sector ends with a **CRC-16/CCITT** (poly `0x1021`, init `0xFFFF`) over all preceding
+  bytes, big-endian. `onboard::seal` applies it; nothing is written without it.
+- Sector 0 is a **profile directory** of 4-byte entries (`sector`, `enabled`), terminated by
+  `ffff`. Each enabled entry points at a profile sector.
+- A profile holds the report rate, a five-step DPI ladder (**little-endian**, unlike HID++
+  messages) and a button table at offset 32 of 4-byte descriptors: `80` mouse button + mask,
+  `90` special action, `00` macro pointer (sector + offset), `ff` disabled.
+- Macros live in their own sector, taken from the top of memory downwards so they can never
+  collide with profiles. OpenGHub rebuilds that sector from its own config on every write, so
+  the device never accumulates orphans.
+
+**A backup is taken automatically before every write** to
+`$XDG_DATA_HOME/openghub/backups/<pid>-<timestamp>.json`, containing every sector verbatim.
+`restore_onboard_memory` puts one back. Use `cargo run --example onboard -- --backup` to take
+one by hand.
 
 ### Button remapping is device-specific
 

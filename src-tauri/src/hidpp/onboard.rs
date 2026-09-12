@@ -308,6 +308,198 @@ pub fn write_sector(h: &mut Handle, sector: u16, data: &[u8]) -> Result<()> {
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Macros (macro format 1)
+// ---------------------------------------------------------------------------
+
+/// One step of a macro, as stored in the device's flash.
+///
+/// Opcodes are variable length, so a macro is a byte stream terminated by
+/// [`OP_END`] rather than a fixed-size table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "step")]
+pub enum MacroStep {
+    /// HID keyboard usage code, e.g. 0x04 = 'a'.
+    KeyDown { usage: u8 },
+    KeyUp { usage: u8 },
+    /// Modifier bitmask: 1 = left ctrl, 2 = left shift, 4 = left alt, 8 = left gui.
+    ModifiersDown { mask: u8 },
+    ModifiersUp { mask: u8 },
+    /// Mouse button bitmask, one bit per button.
+    MouseDown { mask: u16 },
+    MouseUp { mask: u16 },
+    /// Pause in milliseconds.
+    Delay { ms: u16 },
+}
+
+pub const OP_NOOP: u8 = 0x00;
+pub const OP_KEY_DOWN: u8 = 0x20;
+pub const OP_KEY_UP: u8 = 0x21;
+pub const OP_MOD_DOWN: u8 = 0x22;
+pub const OP_MOD_UP: u8 = 0x23;
+pub const OP_MOUSE_DOWN: u8 = 0x40;
+pub const OP_MOUSE_UP: u8 = 0x41;
+pub const OP_DELAY: u8 = 0x80;
+pub const OP_END: u8 = 0xff;
+
+impl MacroStep {
+    pub fn encode(self, out: &mut Vec<u8>) {
+        match self {
+            MacroStep::KeyDown { usage } => out.extend_from_slice(&[OP_KEY_DOWN, usage]),
+            MacroStep::KeyUp { usage } => out.extend_from_slice(&[OP_KEY_UP, usage]),
+            MacroStep::ModifiersDown { mask } => out.extend_from_slice(&[OP_MOD_DOWN, mask]),
+            MacroStep::ModifiersUp { mask } => out.extend_from_slice(&[OP_MOD_UP, mask]),
+            MacroStep::MouseDown { mask } => {
+                out.push(OP_MOUSE_DOWN);
+                out.extend_from_slice(&mask.to_be_bytes());
+            }
+            MacroStep::MouseUp { mask } => {
+                out.push(OP_MOUSE_UP);
+                out.extend_from_slice(&mask.to_be_bytes());
+            }
+            MacroStep::Delay { ms } => {
+                out.push(OP_DELAY);
+                out.extend_from_slice(&ms.to_be_bytes());
+            }
+        }
+    }
+}
+
+/// Encodes a macro into the byte stream the device executes.
+///
+/// Always terminated with [`OP_END`]; without it the device would run off the
+/// end of the macro into whatever follows in the sector.
+pub fn encode_macro(steps: &[MacroStep]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(steps.len() * 3 + 1);
+    for step in steps {
+        step.encode(&mut out);
+    }
+    out.push(OP_END);
+    out
+}
+
+/// Convenience: type a string of ASCII characters with a delay between them.
+///
+/// Returns `None` for characters with no HID usage mapping.
+pub fn macro_for_text(text: &str, delay_ms: u16) -> Option<Vec<MacroStep>> {
+    let mut steps = Vec::new();
+    for (i, ch) in text.chars().enumerate() {
+        let (usage, shift) = hid_usage_for(ch)?;
+        if i > 0 && delay_ms > 0 {
+            steps.push(MacroStep::Delay { ms: delay_ms });
+        }
+        if shift {
+            steps.push(MacroStep::ModifiersDown { mask: 0x02 });
+        }
+        steps.push(MacroStep::KeyDown { usage });
+        steps.push(MacroStep::KeyUp { usage });
+        if shift {
+            steps.push(MacroStep::ModifiersUp { mask: 0x02 });
+        }
+    }
+    Some(steps)
+}
+
+/// Maps an ASCII character to its HID keyboard usage, and whether shift is held.
+pub fn hid_usage_for(ch: char) -> Option<(u8, bool)> {
+    match ch {
+        'a'..='z' => Some((0x04 + (ch as u8 - b'a'), false)),
+        'A'..='Z' => Some((0x04 + (ch as u8 - b'A'), true)),
+        '1'..='9' => Some((0x1e + (ch as u8 - b'1'), false)),
+        '0' => Some((0x27, false)),
+        ' ' => Some((0x2c, false)),
+        '\n' => Some((0x28, false)),
+        '\t' => Some((0x2b, false)),
+        '-' => Some((0x2d, false)),
+        '=' => Some((0x2e, false)),
+        '.' => Some((0x37, false)),
+        ',' => Some((0x36, false)),
+        '/' => Some((0x38, false)),
+        ';' => Some((0x33, false)),
+        '\'' => Some((0x34, false)),
+        _ => None,
+    }
+}
+
+/// A macro bound to one button of a profile.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MacroAssignment {
+    /// Zero-based button index within the profile.
+    pub button: u8,
+    pub steps: Vec<MacroStep>,
+}
+
+/// Which sector holds the macros for a given profile.
+///
+/// Macros are packed into one sector per profile, taken from the top of memory
+/// downwards so they cannot collide with the profile sectors, which start at 1.
+pub fn macro_sector_for(info: &OnboardInfo, profile_index: usize) -> u16 {
+    info.sector_count as u16 - 1 - profile_index as u16
+}
+
+/// Writes a profile's macros and points the matching buttons at them.
+///
+/// The whole macro sector is rebuilt from `assignments` on every call, so
+/// OpenGHub's own config stays the source of truth and the device never
+/// accumulates orphaned macros. Buttons not mentioned keep whatever they had.
+///
+/// Both sectors are written with a correct checksum. Take a backup first: this
+/// modifies the live profile.
+pub fn apply_macros(
+    h: &mut Handle,
+    profile_sector: u16,
+    macro_sector: u16,
+    assignments: &[MacroAssignment],
+    info: &OnboardInfo,
+) -> Result<()> {
+    let size = info.sector_size as usize;
+    let usable = size - 2; // the tail holds the CRC
+
+    // Lay the macros out back to back, remembering where each one starts.
+    let mut macro_bytes = vec![0xffu8; size];
+    let mut cursor = 0usize;
+    let mut offsets: Vec<(u8, u16)> = Vec::with_capacity(assignments.len());
+
+    for assignment in assignments {
+        let encoded = encode_macro(&assignment.steps);
+        if cursor + encoded.len() > usable {
+            return Err(Error::other(format!(
+                "macros do not fit in one sector ({} bytes available)",
+                usable
+            )));
+        }
+        macro_bytes[cursor..cursor + encoded.len()].copy_from_slice(&encoded);
+        offsets.push((assignment.button, cursor as u16));
+        cursor += encoded.len();
+    }
+
+    // Macros first: a button may not point at a sector that is not written yet.
+    write_sector(h, macro_sector, &macro_bytes)?;
+
+    let mut profile = read_sector(h, profile_sector, size, true)?;
+    for (button, offset) in offsets {
+        let at = BUTTONS_OFFSET + button as usize * 4;
+        if at + 4 > usable {
+            return Err(Error::other(format!("button {button} is outside the profile sector")));
+        }
+        let descriptor = Button::Macro { sector: macro_sector as u8, offset }.encode();
+        profile[at..at + 4].copy_from_slice(&descriptor);
+    }
+    write_sector(h, profile_sector, &profile)?;
+    Ok(())
+}
+
+/// Restores one sector verbatim from a backup file.
+pub fn restore_sector(h: &mut Handle, sector: u16, hex: &str) -> Result<()> {
+    let bytes: std::result::Result<Vec<u8>, _> = (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16))
+        .collect();
+    let bytes = bytes.map_err(|_| Error::other("backup sector is not valid hex"))?;
+    write_sector(h, sector, &bytes)
+}
+
 /// A full copy of every sector, for backup before any write.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -360,6 +552,75 @@ mod tests {
         let original = sector.clone();
         seal(&mut sector);
         assert_eq!(sector, original);
+    }
+
+    #[test]
+    fn macro_encoding_is_terminated_and_sized() {
+        let steps = [
+            MacroStep::ModifiersDown { mask: 0x02 },
+            MacroStep::KeyDown { usage: 0x04 },
+            MacroStep::KeyUp { usage: 0x04 },
+            MacroStep::ModifiersUp { mask: 0x02 },
+            MacroStep::Delay { ms: 50 },
+        ];
+        let bytes = encode_macro(&steps);
+        assert_eq!(
+            bytes,
+            vec![0x22, 0x02, 0x20, 0x04, 0x21, 0x04, 0x23, 0x02, 0x80, 0x00, 0x32, 0xff]
+        );
+        assert_eq!(*bytes.last().unwrap(), OP_END, "must always terminate");
+    }
+
+    #[test]
+    fn text_macros_map_to_hid_usages() {
+        // 'h' = 0x0b, 'i' = 0x0c
+        let steps = macro_for_text("hi", 0).unwrap();
+        assert_eq!(
+            steps,
+            vec![
+                MacroStep::KeyDown { usage: 0x0b },
+                MacroStep::KeyUp { usage: 0x0b },
+                MacroStep::KeyDown { usage: 0x0c },
+                MacroStep::KeyUp { usage: 0x0c },
+            ]
+        );
+
+        // Capitals hold left shift around the key.
+        let shifted = macro_for_text("A", 0).unwrap();
+        assert_eq!(shifted[0], MacroStep::ModifiersDown { mask: 0x02 });
+        assert_eq!(shifted[3], MacroStep::ModifiersUp { mask: 0x02 });
+
+        assert!(macro_for_text("€", 0).is_none(), "unmapped characters must not silently vanish");
+    }
+
+    #[test]
+    fn delays_are_inserted_between_keys_only() {
+        let steps = macro_for_text("ab", 25).unwrap();
+        let delays = steps.iter().filter(|s| matches!(s, MacroStep::Delay { .. })).count();
+        assert_eq!(delays, 1, "no leading delay before the first key");
+    }
+
+    #[test]
+    fn macro_sectors_never_collide_with_profiles() {
+        let info = OnboardInfo {
+            memory_model: 1,
+            profile_format: 3,
+            macro_format: 1,
+            profile_count: 5,
+            profile_count_oob: 1,
+            button_count: 11,
+            sector_count: 16,
+            sector_size: 255,
+            mechanical_layout: 0,
+            various_info: 0,
+        };
+        // Profiles occupy sectors 1..=5; macro sectors come down from the top.
+        for profile_index in 0..info.profile_count as usize {
+            let sector = macro_sector_for(&info, profile_index);
+            assert!(sector > info.profile_count as u16, "sector {sector} overlaps a profile");
+            assert!(sector < info.sector_count as u16);
+        }
+        assert_eq!(macro_sector_for(&info, 0), 15);
     }
 
     #[test]

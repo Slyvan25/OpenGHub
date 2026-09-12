@@ -367,6 +367,55 @@ impl DeviceManager {
         })
     }
 
+    /// Renders the given macro assignments into the device's onboard memory.
+    ///
+    /// Rebuilds the macro sector from `assignments` in full, then repoints the
+    /// listed buttons. Buttons not mentioned are left exactly as they were.
+    pub fn apply_onboard_macros(
+        &self,
+        id: &str,
+        assignments: Vec<crate::hidpp::onboard::MacroAssignment>,
+    ) -> Result<()> {
+        use crate::hidpp::onboard;
+        let mut inner = self.inner.lock();
+        if inner.demo {
+            return Ok(());
+        }
+        inner.with_handle(id, |h| {
+            let info = onboard::read_info(h)?;
+            let size = info.sector_size as usize;
+            let directory = onboard::parse_directory(&onboard::read_sector(h, 0, size, true)?);
+            let profile = directory
+                .iter()
+                .position(|e| e.enabled)
+                .ok_or_else(|| Error::other("the device has no enabled onboard profile"))?;
+            let sector = directory[profile].sector;
+            let macro_sector = onboard::macro_sector_for(&info, profile);
+            onboard::apply_macros(h, sector, macro_sector, &assignments, &info)
+        })
+    }
+
+    /// Puts every sector of a backup file back onto the device.
+    pub fn restore_onboard(&self, id: &str, path: &std::path::Path) -> Result<usize> {
+        use crate::hidpp::onboard;
+        let text = std::fs::read_to_string(path)
+            .map_err(|e| Error::other(format!("could not read {}: {e}", path.display())))?;
+        let backup: onboard::MemoryBackup = serde_json::from_str(&text)
+            .map_err(|e| Error::other(format!("{} is not a valid backup: {e}", path.display())))?;
+
+        let mut inner = self.inner.lock();
+        inner.with_handle(id, |h| {
+            let mut written = 0;
+            for (sector, hex) in backup.sectors.iter().enumerate() {
+                // Sector 0 is the directory; restoring it last would be safer,
+                // but the device rejects an inconsistent directory anyway.
+                onboard::restore_sector(h, sector as u16, hex)?;
+                written += 1;
+            }
+            Ok(written)
+        })
+    }
+
     pub fn enumerate_features(&self, id: &str) -> Result<Vec<(u16, u8, u8)>> {
         let mut inner = self.inner.lock();
         inner.with_handle(id, |h| h.enumerate_features())

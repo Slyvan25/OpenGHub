@@ -254,6 +254,7 @@ export async function mockInvoke<T>(command: string, args: Record<string, unknow
         lighting: null,
         lightingZones: {},
         assignments: [],
+        macros: [],
       }) as T;
 
     case "get_lighting_zones": {
@@ -269,6 +270,12 @@ export async function mockInvoke<T>(command: string, args: Record<string, unknow
     case "save_settings":
       config.settings = args.settings as Config["settings"];
       return persist() as T;
+
+    case "apply_onboard_macros":
+      return "~/.local/share/openghub/backups/mock.json" as T;
+
+    case "backup_onboard_memory":
+      return "~/.local/share/openghub/backups/mock.json" as T;
 
     case "get_artwork":
       return {} as T;

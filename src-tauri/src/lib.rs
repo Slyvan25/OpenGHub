@@ -59,6 +59,8 @@ pub fn run() {
             commands::get_lighting_zones,
             commands::backup_onboard_memory,
             commands::get_onboard_profiles,
+            commands::apply_onboard_macros,
+            commands::restore_onboard_memory,
             commands::get_artwork,
             commands::get_artwork_dir,
             commands::read_batteries,

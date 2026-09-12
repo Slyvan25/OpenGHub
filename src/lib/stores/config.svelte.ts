@@ -9,6 +9,7 @@ const EMPTY_DEVICE_PROFILE: DeviceProfile = {
   lighting: null,
   lightingZones: {},
   assignments: [],
+  macros: [],
 };
 
 class ConfigStore {
