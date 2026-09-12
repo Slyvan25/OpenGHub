@@ -46,6 +46,16 @@ pub struct MacroDef {
     pub steps: Vec<crate::hidpp::onboard::MacroStep>,
 }
 
+/// A zone glow's placement on the artwork, 0-1 in each axis.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ZonePosition {
+    pub x: f32,
+    pub y: f32,
+    /// Blob radius as a fraction of the art width.
+    pub r: f32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Assignment {
@@ -75,6 +85,11 @@ pub struct DeviceProfile {
     /// Per-zone settings, keyed by zone index as a string (JSON object keys).
     #[serde(default)]
     pub lighting_zones: std::collections::HashMap<String, LightingSettings>,
+    /// Where each zone's glow sits on this device's artwork, as fractions of the
+    /// art box. Only the user can know this: the device reports no position, and
+    /// a different product photo moves everything.
+    #[serde(default)]
+    pub zone_positions: std::collections::HashMap<String, ZonePosition>,
     #[serde(default)]
     pub assignments: Vec<Assignment>,
     /// Recorded macros, referenced by assignments whose category is `macro`.
@@ -89,6 +104,13 @@ pub struct Profile {
     pub name: String,
     /// `desktop` | `game` | `app` — drives the icon in the profile picker.
     pub kind: String,
+    /// Application id from Logitech's database. When that game is detected
+    /// running, this profile is activated automatically.
+    #[serde(default)]
+    pub application_id: Option<String>,
+    /// Poster for the picker, cached from the database at bind time.
+    #[serde(default)]
+    pub poster_url: Option<String>,
     #[serde(default)]
     pub devices: std::collections::HashMap<String, DeviceProfile>,
 }
@@ -99,6 +121,8 @@ impl Profile {
             id: "default".into(),
             name: "Desktop: Default".into(),
             kind: "desktop".into(),
+            application_id: None,
+            poster_url: None,
             devices: Default::default(),
         }
     }
@@ -115,6 +139,13 @@ pub struct Settings {
     pub battery_poll_seconds: u64,
     #[serde(default)]
     pub illumination_follows_profile: bool,
+    /// Switch profiles automatically when a bound game starts or stops.
+    #[serde(default = "default_true")]
+    pub auto_switch_profiles: bool,
+    /// Fetch a device's render and layout from Logitech's CDN on first sight,
+    /// as G HUB does. Only possible once a depository has been imported.
+    #[serde(default = "default_true")]
+    pub auto_fetch_artwork: bool,
 }
 
 fn default_true() -> bool {
@@ -131,6 +162,8 @@ impl Default for Settings {
             show_battery_notifications: true,
             battery_poll_seconds: default_poll_secs(),
             illumination_follows_profile: false,
+            auto_switch_profiles: true,
+            auto_fetch_artwork: true,
         }
     }
 }
@@ -262,6 +295,7 @@ mod tests {
                 report_rate_hz: Some(1000),
                 lighting: Some(LightingSettings::default()),
                 lighting_zones: Default::default(),
+                zone_positions: Default::default(),
                 assignments: vec![],
                 macros: vec![],
             },

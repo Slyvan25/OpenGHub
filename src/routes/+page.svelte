@@ -104,6 +104,7 @@
             <DeviceArt
               kind={device.kind}
               productIds={artworkIds(device)}
+              variant="thumb"
               glow={glowFor(device.id)}
               brightness={brightnessFor(device.id)}
             />

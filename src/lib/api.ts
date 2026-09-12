@@ -17,6 +17,13 @@ import type {
   ReportRateState,
   Settings,
   ZoneInfo,
+  Application,
+  ApplicationCommands,
+  DatabaseInfo,
+  ArtworkLayout,
+  GhubCacheInfo,
+  ImportedDevice,
+  ImportReport,
 } from "./types";
 
 export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -47,6 +54,9 @@ export const events = {
   devicesChanged: "devices-changed",
   batteryUpdate: "battery-update",
   deviceUpdated: "device-updated",
+  activeApplication: "active-application",
+  configChanged: "config-changed",
+  artworkChanged: "artwork-changed",
 } as const;
 
 // -- devices ---------------------------------------------------------------
@@ -71,6 +81,19 @@ export const setDeviceLighting = (request: LightingRequest) =>
 
 export const getLightingZones = (deviceId: string) =>
   call<ZoneInfo[]>("get_lighting_zones", { deviceId });
+
+// -- application database --------------------------------------------------
+
+export const getApplications = () => call<Application[]>("get_applications");
+export const getApplicationCommands = (applicationId: string) =>
+  call<ApplicationCommands>("get_application_commands", { applicationId });
+export const getApplicationDatabaseInfo = () =>
+  call<DatabaseInfo | null>("get_application_database_info");
+export const refreshApplicationDatabase = () =>
+  call<DatabaseInfo>("refresh_application_database");
+export const getActiveApplication = () => call<string | null>("get_active_application");
+export const bindProfileApplication = (profileId: string, applicationId: string | null) =>
+  call<Config>("bind_profile_application", { profileId, applicationId });
 
 // -- onboard profiles ------------------------------------------------------
 
@@ -112,6 +135,16 @@ export const getConfigPath = () => call<string>("get_config_path");
 
 export const getArtwork = () => call<Record<string, string>>("get_artwork");
 export const getArtworkDir = () => call<string>("get_artwork_dir");
+export const getArtworkLayout = (productIds: number[]) =>
+  call<ArtworkLayout | null>("get_artwork_layout", { productIds });
+
+// -- G HUB depots ----------------------------------------------------------
+
+export const importGhubProgramData = (path: string) =>
+  call<ImportReport>("import_ghub_program_data", { path });
+export const fetchDeviceArtwork = (deviceId: string) =>
+  call<ImportedDevice>("fetch_device_artwork", { deviceId });
+export const getGhubCacheInfo = () => call<GhubCacheInfo | null>("get_ghub_cache_info");
 
 // -- window ----------------------------------------------------------------
 

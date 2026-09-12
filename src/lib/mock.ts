@@ -113,6 +113,8 @@ function loadConfig(): Config {
       showBatteryNotifications: true,
       batteryPollSeconds: 60,
       illuminationFollowsProfile: false,
+      autoSwitchProfiles: true,
+      autoFetchArtwork: true,
     },
   };
 }
@@ -253,6 +255,7 @@ export async function mockInvoke<T>(command: string, args: Record<string, unknow
         reportRateHz: null,
         lighting: null,
         lightingZones: {},
+        zonePositions: {},
         assignments: [],
         macros: [],
       }) as T;
@@ -276,6 +279,59 @@ export async function mockInvoke<T>(command: string, args: Record<string, unknow
 
     case "backup_onboard_memory":
       return "~/.local/share/openghub/backups/mock.json" as T;
+
+    case "get_applications":
+      return [
+        { id: "cs2", name: "Counter-Strike 2", posterUrl: null, steamAppIds: ["730"], executables: [], commandCount: 33 },
+        { id: "apex", name: "Apex Legends", posterUrl: null, steamAppIds: ["1172470"], executables: [], commandCount: 21 },
+        { id: "valorant", name: "Valorant", posterUrl: null, steamAppIds: [], executables: ["valorant.exe"], commandCount: 18 },
+      ] as T;
+
+    case "get_application_commands":
+      return {
+        id: args.applicationId,
+        name: "Counter-Strike 2",
+        commands: [
+          { category: "Movement", name: "Jump", keystroke: ["Space"] },
+          { category: "Movement", name: "Crouch", keystroke: ["Ctrl"] },
+          { category: "Weapons", name: "Reload", keystroke: ["R"] },
+          { category: "Communications", name: "Voice chat", keystroke: ["K"] },
+        ],
+        categoryColors: [
+          { hex: "#e42121", tag: "Movement" },
+          { hex: "#2dd22f", tag: "Weapons" },
+          { hex: "#9b24db", tag: "Communications" },
+        ],
+      } as T;
+
+    case "get_application_database_info":
+      return { version: "mock", applicationCount: 3, fetchedAt: 0, cachePath: "(mock)" } as T;
+
+    case "refresh_application_database":
+      return { version: "mock", applicationCount: 3, fetchedAt: Date.now() / 1000, cachePath: "(mock)" } as T;
+
+    case "get_active_application":
+      return null as T;
+
+    case "bind_profile_application": {
+      const p = config.profiles.find((x) => x.id === args.profileId);
+      if (p) {
+        p.applicationId = args.applicationId as string | null;
+        if (args.applicationId && !p.name.includes(":")) p.name = `Game: ${p.name}`;
+        p.kind = args.applicationId ? "game" : "desktop";
+      }
+      return persist() as T;
+    }
+
+    case "get_artwork_layout":
+    case "get_ghub_cache_info":
+      return null as T;
+
+    case "import_ghub_program_data":
+      throw "importing G HUB data needs the desktop app";
+
+    case "fetch_device_artwork":
+      throw "fetching artwork needs the desktop app";
 
     case "get_artwork":
       return {} as T;

@@ -8,6 +8,7 @@ const EMPTY_DEVICE_PROFILE: DeviceProfile = {
   reportRateHz: null,
   lighting: null,
   lightingZones: {},
+  zonePositions: {},
   assignments: [],
   macros: [],
 };
@@ -20,6 +21,8 @@ class ConfigStore {
     showBatteryNotifications: true,
     batteryPollSeconds: 60,
     illuminationFollowsProfile: false,
+    autoSwitchProfiles: true,
+    autoFetchArtwork: true,
   });
   loading = $state(true);
 
@@ -67,6 +70,10 @@ class ConfigStore {
 
   async saveSettings(settings: Settings) {
     this.apply(await api.saveSettings(settings));
+  }
+
+  async bindApplication(profileId: string, applicationId: string | null) {
+    this.apply(await api.bindProfileApplication(profileId, applicationId));
   }
 }
 

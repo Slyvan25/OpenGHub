@@ -19,11 +19,33 @@ export interface ZoneSpot {
   r: number;
 }
 
+/**
+ * Per-product overrides, keyed by product id.
+ *
+ * The device reports only a *location* ("Primary", "Logo"), never a position,
+ * and what those mean physically differs per model: a G502's Primary zone is
+ * the DPI indicator on its left flank, not the scroll wheel — it has no wheel
+ * lighting at all. There is no way to derive this, so it is data, and the user
+ * can override it by dragging (see `zonePositions` in the device profile).
+ */
+const BY_PRODUCT: Record<string, Record<string, ZoneSpot>> = {
+  // G502 LIGHTSPEED / HERO / X — DPI LEDs on the left flank, G logo on the palm.
+  "407f": { Primary: { x: 0.3, y: 0.38, r: 0.1 }, Logo: { x: 0.52, y: 0.66, r: 0.2 } },
+  c08d: { Primary: { x: 0.3, y: 0.38, r: 0.1 }, Logo: { x: 0.52, y: 0.66, r: 0.2 } },
+  c08b: { Primary: { x: 0.3, y: 0.38, r: 0.1 }, Logo: { x: 0.52, y: 0.66, r: 0.2 } },
+};
+
+/**
+ * Category fallbacks, used when a product is not in the table above.
+ *
+ * Deliberately vague: a generic "Primary" glow sits centrally rather than
+ * claiming a specific component the device may not even have.
+ */
 const MOUSE: Record<string, ZoneSpot> = {
-  Primary: { x: 0.5, y: 0.26, r: 0.16 },
-  Logo: { x: 0.5, y: 0.64, r: 0.26 },
-  Left: { x: 0.2, y: 0.45, r: 0.16 },
-  Right: { x: 0.8, y: 0.45, r: 0.16 },
+  Primary: { x: 0.5, y: 0.45, r: 0.16 },
+  Logo: { x: 0.5, y: 0.64, r: 0.22 },
+  Left: { x: 0.24, y: 0.45, r: 0.14 },
+  Right: { x: 0.76, y: 0.45, r: 0.14 },
 };
 
 const KEYBOARD: Record<string, ZoneSpot> = {
@@ -54,13 +76,34 @@ function table(kind: DeviceKind): Record<string, ZoneSpot> {
   }
 }
 
-/** Falls back to a centred blob for locations we have no position for. */
-export function spotFor(kind: DeviceKind, locationName: string, index: number): ZoneSpot {
+/**
+ * Where to draw a zone's glow, best source first:
+ *
+ * 1. the user's own dragged position for this device,
+ * 2. a per-product entry,
+ * 3. the device category's fallback.
+ *
+ * Only step 1 can be right for user-supplied artwork, since a different photo
+ * of the same mouse puts everything somewhere else.
+ */
+export function spotFor(
+  kind: DeviceKind,
+  locationName: string,
+  index: number,
+  options: { productIds?: number[]; overrides?: Record<string, ZoneSpot> } = {},
+): ZoneSpot {
+  const override = options.overrides?.[String(index)];
+  if (override) return override;
+
+  for (const id of options.productIds ?? []) {
+    const spot = BY_PRODUCT[id.toString(16).padStart(4, "0")]?.[locationName];
+    if (spot) return spot;
+  }
+
   const t = table(kind);
   if (t[locationName]) return t[locationName];
   // Unknown location: spread extra zones horizontally so they stay distinct.
-  const spread = 0.25 + index * 0.25;
-  return { x: Math.min(0.85, spread), y: 0.5, r: 0.2 };
+  return { x: Math.min(0.85, 0.25 + index * 0.25), y: 0.5, r: 0.2 };
 }
 
 /**

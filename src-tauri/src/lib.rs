@@ -1,8 +1,10 @@
 //! OpenGHub — an open source, Linux-native reimplementation of Logitech G HUB.
 
+pub mod apps;
 pub mod artwork;
 pub mod commands;
 pub mod demo;
+pub mod depot;
 pub mod hidpp;
 pub mod profiles;
 pub mod state;
@@ -30,6 +32,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(DeviceManager::new())
         .manage(Store::load())
+        .manage(std::sync::Arc::new(apps::AppDatabase::new()))
         .setup(|app| {
             let handle = app.handle().clone();
 
@@ -37,9 +40,11 @@ pub fn run() {
             let manager = app.state::<DeviceManager>();
             let devices = manager.refresh();
             log::info!("found {} device(s) (demo: {})", devices.len(), manager.is_demo());
+            spawn_artwork_fetch(handle.clone(), devices);
 
             build_tray(app)?;
-            spawn_battery_poller(handle);
+            spawn_battery_poller(handle.clone());
+            spawn_application_watcher(handle);
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -57,10 +62,20 @@ pub fn run() {
             commands::set_polling_rate,
             commands::set_device_lighting,
             commands::get_lighting_zones,
+            commands::get_applications,
+            commands::get_application_commands,
+            commands::get_application_database_info,
+            commands::refresh_application_database,
+            commands::get_active_application,
+            commands::bind_profile_application,
             commands::backup_onboard_memory,
             commands::get_onboard_profiles,
             commands::apply_onboard_macros,
             commands::restore_onboard_memory,
+            commands::import_ghub_program_data,
+            commands::fetch_device_artwork,
+            commands::get_ghub_cache_info,
+            commands::get_artwork_layout,
             commands::get_artwork,
             commands::get_artwork_dir,
             commands::read_batteries,
@@ -106,6 +121,109 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
         })
         .build(app)?;
     Ok(())
+}
+
+/// Emitted after artwork was fetched for a device, so the UI rescans.
+pub const EVENT_ARTWORK_CHANGED: &str = "artwork-changed";
+
+/// Fetches renders for any connected device that has none — what G HUB does the
+/// first time it sees a device. Silent when no depository has been imported,
+/// and never retries a product id that already failed this session.
+pub fn spawn_artwork_fetch(app: tauri::AppHandle, devices: Vec<state::DeviceSnapshot>) {
+    use std::collections::HashSet;
+    use std::sync::{Mutex, OnceLock};
+    static TRIED: OnceLock<Mutex<HashSet<u16>>> = OnceLock::new();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        if !app.state::<Store>().get().settings.auto_fetch_artwork {
+            return;
+        }
+        if depot::load_cache().is_err() {
+            return; // nothing imported yet; the settings screen explains
+        }
+        let have = artwork::scan();
+        let tried = TRIED.get_or_init(|| Mutex::new(HashSet::new()));
+        let mut fetched_any = false;
+
+        for device in devices.iter().filter(|d| d.online && !d.demo) {
+            let mut ids = device.model_ids.clone();
+            ids.push(device.product_id);
+            if ids.iter().any(|id| have.contains_key(&artwork::key(*id))) {
+                continue;
+            }
+            {
+                let mut t = tried.lock().unwrap_or_else(|e| e.into_inner());
+                if ids.iter().any(|id| t.contains(id)) {
+                    continue;
+                }
+                t.extend(ids.iter().copied());
+            }
+            match depot::fetch_for_product_ids(&ids) {
+                Ok(d) => {
+                    log::info!("fetched artwork for {}", d.display_name);
+                    fetched_any = true;
+                }
+                Err(e) => log::warn!("artwork for {} not fetched: {e}", device.name),
+            }
+        }
+        if fetched_any {
+            let _ = app.emit(EVENT_ARTWORK_CHANGED, ());
+        }
+    });
+}
+
+/// Loads Logitech's application database, then watches for a bound game
+/// starting or stopping and switches the active profile to match — G HUB's
+/// per-game profiles. Detection reads `/proc`, so it costs a few milliseconds
+/// every couple of seconds and works under any compositor.
+fn spawn_application_watcher(app: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let db = app.state::<std::sync::Arc<apps::AppDatabase>>().inner().clone();
+        let loaded = tauri::async_runtime::spawn_blocking({
+            let db = db.clone();
+            move || db.load()
+        })
+        .await;
+        match loaded {
+            Ok(Ok(info)) => log::info!(
+                "application database {} ({} apps)",
+                info.version,
+                info.application_count
+            ),
+            Ok(Err(e)) => log::warn!("application database unavailable: {e}"),
+            Err(e) => log::warn!("application database task failed: {e}"),
+        }
+
+        let mut last: Option<String> = None;
+        loop {
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            let current = db.detect_running();
+            if current == last {
+                continue;
+            }
+            last = current.clone();
+            let _ = app.emit(commands::EVENT_ACTIVE_APPLICATION, &current);
+
+            // Switch profiles to match, if the user has that on.
+            let store = app.state::<Store>();
+            let cfg = store.get();
+            if !cfg.settings.auto_switch_profiles {
+                continue;
+            }
+            let target = match &current {
+                Some(id) => cfg.profiles.iter().find(|p| p.application_id.as_deref() == Some(id)),
+                None => cfg.profiles.iter().find(|p| p.id == "default"),
+            };
+            if let Some(profile) = target {
+                if profile.id != cfg.active_profile {
+                    log::info!("switching to profile '{}'", profile.name);
+                    let id = profile.id.clone();
+                    let _ = store.update(|c| c.active_profile = id);
+                    let _ = app.emit("config-changed", store.get());
+                }
+            }
+        }
+    });
 }
 
 /// Background worker that polls battery-backed devices and pushes the result to

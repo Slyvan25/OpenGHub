@@ -14,6 +14,7 @@
   import { configStore } from "$lib/stores/config.svelte";
   import { ui } from "$lib/stores/ui.svelte";
   import type { Device, LightEffectName, LightingSettings, ZoneInfo } from "$lib/types";
+  import type { ZoneSpot } from "$lib/zones";
 
   interface Props {
     device: Device;
@@ -50,6 +51,10 @@
   let loading = $state(true);
   let applying = $state(false);
   let seededFor = $state<string | null>(null);
+  let editZones = $state(false);
+  let identifying = $state(false);
+  /** Dragged glow positions for this device, keyed by zone index. */
+  let positions = $state<Record<string, ZoneSpot>>({});
 
   const current = $derived(byZone[String(activeZone)] ?? DEFAULTS);
   const zoneInfo = $derived(zones.find((z) => z.index === activeZone));
@@ -64,6 +69,7 @@
     zones.map((z) => {
       const s = byZone[String(z.index)] ?? DEFAULTS;
       return {
+        index: z.index,
         locationName: z.locationName,
         color: s.effect === "off" ? null : s.color,
         brightness: s.brightness,
@@ -94,6 +100,7 @@
       seeded[key] = profile.lightingZones?.[key] ?? profile.lighting ?? { ...DEFAULTS };
     }
     byZone = seeded;
+    positions = { ...(profile.zonePositions ?? {}) };
     activeZone = zones[0]?.index ?? 0;
     loading = false;
   }
@@ -126,6 +133,7 @@
       ...profile,
       lightingZones: { ...byZone },
       lighting: byZone[String(activeZone)] ?? profile.lighting,
+      zonePositions: { ...positions },
     });
   }
 
@@ -134,6 +142,48 @@
       ...byZone,
       [String(activeZone)]: { ...current, ...patch },
     };
+  }
+
+  function moveZone(index: number, spot: ZoneSpot) {
+    positions = { ...positions, [String(index)]: spot };
+    persist();
+  }
+
+  function resetPositions() {
+    positions = {};
+    persist();
+    ui.toast("Zone positions reset to the built-in defaults.", "success", 2500);
+  }
+
+  /**
+   * Lights only the selected zone, briefly, so the user can see which physical
+   * LED it is. The device cannot tell us where a zone is, so this is the only
+   * reliable way to match a tab to a light.
+   */
+  async function identifyZone() {
+    if (identifying) return;
+    identifying = true;
+    const restore = { ...byZone };
+    try {
+      for (const zone of zones) {
+        await api.setDeviceLighting({
+          deviceId: device.id,
+          zone: zone.index,
+          color: zone.index === activeZone ? "#ffffff" : "#000000",
+          effect: zone.index === activeZone ? "fixed" : "off",
+          brightness: 100,
+          rateMs: 1000,
+          persist: false,
+        });
+      }
+      await new Promise((r) => setTimeout(r, 2500));
+    } catch (e) {
+      ui.toast(`Could not identify the zone: ${api.errorMessage(e)}`, "error");
+    } finally {
+      byZone = restore;
+      for (const zone of zones) await apply(zone.index);
+      identifying = false;
+    }
   }
 
   /** Copies the active zone onto every other zone and applies them all. */
@@ -230,6 +280,25 @@
         <button class="wide" onclick={syncZones}>Sync lighting zones</button>
       {/if}
 
+      <div class="placement">
+        <button class="wide" class:on={editZones} onclick={() => (editZones = !editZones)}>
+          {editZones ? "Done positioning" : "Position zones on artwork"}
+        </button>
+        {#if editZones}
+          <p class="hint">
+            Drag each label to where that light actually sits on your device. OpenGHub cannot
+            read this from the hardware — it only reports that a zone is called
+            “{zoneInfo?.locationName}”, not where it is.
+          </p>
+          <div class="row">
+            <button class="wide small" onclick={identifyZone} disabled={identifying}>
+              {identifying ? "Watch the device…" : `Identify ${zoneInfo?.locationName ?? "zone"}`}
+            </button>
+            <button class="wide small" onclick={resetPositions}>Reset</button>
+          </div>
+        {/if}
+      </div>
+
       <p class="hint foot">
         {#if applying}Applying…{:else}Zone {activeZone + 1} of {zones.length}.{/if}
         Settings are stored in <strong>{configStore.active?.name}</strong>.
@@ -242,6 +311,10 @@
       kind={device.kind}
       productIds={artworkIds(device)}
       zones={glows}
+      zoneProductIds={artworkIds(device)}
+      zoneOverrides={positions}
+      {editZones}
+      onzonemove={moveZone}
       class="render"
     />
   {/snippet}
@@ -346,8 +419,38 @@
     color: var(--text);
   }
 
-  .wide:hover {
+  .wide:hover:not(:disabled) {
     background: var(--surface-3);
+  }
+
+  .wide:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
+
+  .wide.on {
+    border-color: var(--cyan);
+    color: var(--cyan);
+  }
+
+  .wide.small {
+    padding: 8px;
+    font-size: 11px;
+  }
+
+  .placement {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .row {
+    display: flex;
+    gap: 8px;
+  }
+
+  .row .wide {
+    flex: 1;
   }
 
   .hint {

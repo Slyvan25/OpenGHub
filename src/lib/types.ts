@@ -142,15 +142,50 @@ export interface DeviceProfile {
   lighting: LightingSettings | null;
   /** Per-zone settings, keyed by zone index. */
   lightingZones: Record<string, LightingSettings>;
+  /** Dragged glow positions, keyed by zone index. */
+  zonePositions: Record<string, { x: number; y: number; r: number }>;
   assignments: Assignment[];
   /** Recorded macros, referenced by assignments with category `macro`. */
   macros: MacroDef[];
+}
+
+/** An entry from Logitech's public application database. */
+export interface Application {
+  id: string;
+  name: string;
+  posterUrl: string | null;
+  steamAppIds: string[];
+  executables: string[];
+  commandCount: number;
+}
+
+export interface ApplicationCommand {
+  category: string;
+  name: string;
+  keystroke: string[];
+}
+
+export interface ApplicationCommands {
+  id: string;
+  name: string;
+  commands: ApplicationCommand[];
+  categoryColors: { hex: string; tag: string }[];
+}
+
+export interface DatabaseInfo {
+  version: string;
+  applicationCount: number;
+  fetchedAt: number;
+  cachePath: string;
 }
 
 export interface Profile {
   id: string;
   name: string;
   kind: "desktop" | "game" | "app";
+  /** Bound game from the application database; activates when it runs. */
+  applicationId?: string | null;
+  posterUrl?: string | null;
   devices: Record<string, DeviceProfile>;
 }
 
@@ -159,12 +194,60 @@ export interface Settings {
   showBatteryNotifications: boolean;
   batteryPollSeconds: number;
   illuminationFollowsProfile: boolean;
+  autoSwitchProfiles: boolean;
+  autoFetchArtwork: boolean;
 }
 
 export interface Config {
   profiles: Profile[];
   activeProfile: string;
   settings: Settings;
+}
+
+/** Zone rectangles and button markers imported from a G HUB depot, normalised 0–1. */
+export interface ArtworkLayout {
+  modelId: string;
+  displayName: string;
+  views: ArtworkView[];
+}
+
+export interface ArtworkView {
+  view: "front" | "side" | string;
+  width: number;
+  height: number;
+  zones: { id: string; locationName: string; x: number; y: number; width: number; height: number }[];
+  controls: {
+    slotId: string;
+    control: string;
+    markerX: number;
+    markerY: number;
+    labelX: number;
+    labelY: number;
+    side: "left" | "right" | "top";
+  }[];
+}
+
+export interface GhubCacheInfo {
+  buildId: string;
+  version: string;
+  depots: number;
+  deviceDefinitions: number;
+}
+
+export interface ImportedDevice {
+  modelId: string;
+  displayName: string;
+  productIds: number[];
+  views: string[];
+  hasThumbnail: boolean;
+}
+
+export interface ImportReport {
+  buildId: string;
+  depotsInDepository: number;
+  deviceDefinitions: number;
+  imported: ImportedDevice[];
+  artworkDir: string;
 }
 
 export interface LightingRequest {

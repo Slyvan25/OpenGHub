@@ -17,6 +17,8 @@ kernel module, no proprietary daemon.
 | Report/polling rate, 125 Hz – 8 kHz (`0x8060`, `0x8061`) | ✅ |
 | Feature enumeration & diagnostics (`0x0001`) | ✅ |
 | Profiles, per-device settings, persistence | ✅ |
+| Per-game profiles: detection, auto-switch, game command sets | ✅ via Logitech's public application database |
+| Device renders, thumbnails, exact zone & button geometry | ✅ imported from a G HUB install, or fetched from Logitech's CDN per device |
 | RGB lighting (`0x8070`) | ✅ per zone: off / fixed / breathing / colour cycle |
 | Macros on onboard memory (`0x8100`) | ✅ recorded, written to device flash, backed up first |
 | Button remapping (non-macro) | ⚠️ UI and profile storage only; not written to the device yet |
@@ -96,6 +98,35 @@ OpenGHub therefore takes host mode lazily: lighting always claims it up front, b
 silently-dropped write gives nothing to react to, while DPI and report rate only claim it after
 a write is actually refused. A device that is happy in onboard mode is left alone.
 
+### Per-game profiles and the application database
+
+G HUB keys profiles on the running game and shows each game's own keybinds in the COMMANDS
+tab. Both come from a **public, unauthenticated** channel that G HUB itself uses — verified
+live, no credentials involved:
+
+```
+https://gamesapps-assets.ghub.logitechg.com/v1/channels/public/update_apps.json
+  → { version, applicationPath }
+https://gamesapps-assets.ghub.logitechg.com/assets/<version>/applications.json
+  → 846 applications: detection rules, command sets, category colours
+https://gamesapps-assets.ghub.logitechg.com/images/<hash>/<name>_poster.jpg
+  → posters, loaded at runtime (never bundled)
+```
+
+`src-tauri/src/apps.rs` fetches this on startup, caches it under
+`$XDG_DATA_HOME/openghub/apps/`, and refreshes after 24 hours. `cargo run --example appsdb`
+exercises the whole chain.
+
+**Detection on Linux** reads `/proc` rather than asking the compositor which window is
+focused — Wayland will not say. 809 of the 846 entries carry a Steam app id, and Steam exports
+`SteamAppId` into every game process it launches, so that is authoritative. Executable basenames
+from the Windows-oriented rules serve as a weaker fallback for Proton, Lutris and Heroic. A
+watcher polls every 3 s; when a bound game starts, its profile activates, and when it stops,
+Desktop takes over. **Settings → "Switch profiles with games"** turns this off.
+
+Note that none of this is Logitech's *device* depot channel, which is a separate, internal,
+token-gated service (see the section on device artwork).
+
 ### Onboard memory and macros
 
 Macros are written into the device's own flash, so they keep working with OpenGHub closed.
@@ -141,11 +172,88 @@ turns into the tab names G HUB uses — a G502 reports `0x0001` and `0x0002`, sh
 and **LOGO**. Each zone keeps its own effect and colour in the profile, and "sync lighting
 zones" copies the active one across.
 
-Zone positions on the artwork live in `src/lib/zones.ts`, as fractions of the art box per
-device category. The device reports *which* zone is lit but not *where* it is in the picture,
-so a photo gets the lighting composited on top: one screen-blended blob per lit zone. That is
-an approximation, but it puts a G502's logo glow on the palm and its primary glow on the wheel,
-which is what the real mouse does.
+### Where G HUB's artwork really comes from
+
+Reverse-engineered from a G HUB 39.1 `C:\ProgramData\LGHUB` tree, a Wireshark capture of a
+first start, and cross-checked against the device's own HID++ replies. The whole chain:
+
+1. **The depository** — `ProgramData\LGHUB\current.json` — lists every depot of a build
+   (757 in build 824196, 322 of them devices) with a stable UUID URL, a SHA-256 `mac`, a size
+   and an RSA signature:
+   ```
+   https://updates.ghub.logitechg.com/depots/<uuid>/<name>.depot
+   ```
+   This file is the one gated piece: it arrives via a bootstrap on `util.logitech.io`, which
+   refuses plain requests. OpenGHub therefore imports it from an existing installation.
+2. **Device depots are public and unencrypted.** Their `cipherSuite`/`iv`/`key` are empty;
+   only some application depots are encrypted. `curl` on the URL above returns the same bytes
+   G HUB has on disk — verified byte-for-byte.
+3. **The `.depot` container** is `magic 10 01 17 20 | json_len (u32 LE) | json | [len (u32 LE) | bytes]*`,
+   the JSON naming files in order. No compression. `src-tauri/src/depot.rs` unpacks it.
+4. **The device database** — `depots/<build>/core/data/devices/devices_NNNN.json` — maps
+   `046d_<pid>` to a `modelId` (`g502_wireless`), its depot, display name, thumbnail and
+   lighting `typeMap` (`ZONE_PRIMARY → PRIMARY`, `ZONE_BRANDING → LOGO`). Files beginning
+   `21 05 21 20` are encrypted, presumably unannounced hardware, and are skipped.
+5. **`metadata.json` inside a device depot** gives, in image pixels, a **rectangle per
+   lighting zone** and a **marker + label position per button**, for a front and a side view.
+   That is exactly what G HUB draws — and it matches what the device reports over HID++
+   (`0x0003` model ids, `0x8070` zone locations) in every field checked.
+
+**Settings → G HUB data → "Import from G HUB folder"** reads such a tree, writes each device's
+`<pid>.png`, `<pid>-side.png`, `<pid>-thumb.png` and `<pid>.layout.json` into the artwork
+directory, and caches the depository. From then on any device OpenGHub sees for the first
+time is fetched from Logitech's CDN automatically (SHA-256 verified), the way G HUB does —
+switchable off with "Fetch artwork automatically". `cargo run --example ghubimport` does the
+same from the command line.
+
+Nothing from Logitech is bundled in this repository. The user supplies the depository from
+their own installation; OpenGHub then does what the official client does.
+
+### Zone positions without a depot
+
+**A device cannot tell you where its zones are.** This was confirmed against G HUB's own
+device schema, recovered from the protobuf descriptors embedded in `lghub_agent.exe`:
+
+```protobuf
+message MaskedZone {
+  string id = 1;
+  repeated string slot_ids = 2;
+  string display_icon_key = 3;   // tab icon, suffixed `_on` / `_off`
+  string render_icon_key = 4;    // image composited over the device render
+  bool enabled = 5;
+}
+MaskedZones maskable_zones = 6;  // in Capabilities
+```
+
+No coordinates anywhere: each zone points at an **image**, resolved through
+`manifest.Resource { key, src }` to a file in a per-device depot the app downloads at runtime.
+The frontend then uses that image as a CSS mask (`-webkit-mask: url(...) no-repeat center` with
+`mask-size: contain`) and fills it with the live colour.
+
+OpenGHub supports the same thing: drop `<product-id>-zone<N>.png` next to the base render and
+its alpha channel is used as a mask, giving pixel-accurate lighting. Without a mask it falls
+back to a positioned glow: `getZoneInfo` returns a *location code* —
+`0x0001` "Primary", `0x0002` "Logo" — which is semantic, not positional, and what it means
+physically differs per model: a G502's Primary zone is the DPI indicator on its left flank, and
+it has no scroll-wheel lighting at all. G HUB only knows because Logitech ships per-device
+asset packs with zone masks.
+
+So the position is data, resolved in layers (`src/lib/zones.ts`, `DeviceArt.svelte`):
+
+0. **an imported depot layout** (`<pid>.layout.json`) — G HUB's own rectangles, exact;
+1. **a per-zone mask image**, if one exists;
+2. **the user's dragged position** for that device, stored in the profile;
+3. **a per-product entry**, keyed by product id;
+4. **a category fallback**, deliberately vague rather than claiming a component the device may
+   not have.
+
+Layers 2–4 are approximations, and the artwork being user-supplied makes that unavoidable: a
+different photo of the same mouse puts everything somewhere else. **LIGHTSYNC → "Position zones on artwork"**
+turns on drag handles, and **"Identify"** lights one zone at a time on the real device so you
+can see which tab is which light.
+
+The glow itself is composited over the photo with `mix-blend-mode: screen`, one blob per lit
+zone, so light is added rather than painted over the product.
 
 ### Lighting notes
 

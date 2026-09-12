@@ -33,6 +33,9 @@ parking_lot = "0.12"
 log = "0.4"
 env_logger = "0.11"
 directories = "5"
+# Fetches Logitech's public application database (game detection rules,
+# per-game command sets, posters). rustls so there is no OpenSSL dependency.
+ureq = { version = "2", default-features = false, features = ["tls", "json", "gzip"] }
 
 # The `probe` example links against the lib and needs hidapi directly.
 [dev-dependencies]

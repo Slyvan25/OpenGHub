@@ -1,13 +1,28 @@
 <script lang="ts">
   /** Profile manager: create, switch and delete application profiles. */
   import * as api from "$lib/api";
+  import GamePicker from "$lib/components/GamePicker.svelte";
   import Icon from "$lib/components/Icon.svelte";
+  import type { Application } from "$lib/types";
   import { configStore } from "$lib/stores/config.svelte";
   import { deviceStore } from "$lib/stores/devices.svelte";
   import { ui } from "$lib/stores/ui.svelte";
 
   let newName = $state("");
   let busy = $state(false);
+  /** Profile whose game binding is being edited. */
+  let binding = $state<string | null>(null);
+
+  async function bind(profileId: string, app: Application | null) {
+    try {
+      await configStore.bindApplication(profileId, app?.id ?? null);
+      ui.toast(app ? `Bound to ${app.name}.` : "Unbound from game.", "success", 2500);
+    } catch (e) {
+      ui.toast(api.errorMessage(e), "error");
+    } finally {
+      binding = null;
+    }
+  }
 
   async function create(event: SubmitEvent) {
     event.preventDefault();
@@ -44,9 +59,9 @@
   <header>
     <h1>Profiles</h1>
     <p>
-      Every DPI stage, lighting effect and binding belongs to a profile. Switch profiles from
-      the picker in the top bar; the active one is applied to all
-      {deviceStore.devices.length} detected device(s).
+      Every DPI stage, lighting effect and binding belongs to a profile. Bind a profile to a
+      game and it activates automatically when that game is running — the desktop profile takes
+      over when it stops. Applies to all {deviceStore.devices.length} detected device(s).
     </p>
   </header>
 
@@ -65,17 +80,31 @@
   <div class="list">
     {#each configStore.profiles as profile (profile.id)}
       <div class="profile card" class:active={profile.id === configStore.activeProfileId}>
-        <span class="icon">
-          <Icon name={profile.kind === "desktop" ? "profile" : "macro"} size={17} />
-        </span>
+        {#if profile.posterUrl}
+          <img class="poster" src={profile.posterUrl} alt="" />
+        {:else}
+          <span class="icon">
+            <Icon name={profile.kind === "desktop" ? "profile" : "macro"} size={17} />
+          </span>
+        {/if}
 
         <div class="info">
           <div class="name">{profile.name}</div>
           <div class="sub">
             {configuredCount(profile.id)} device(s) configured
+            {#if profile.applicationId}· auto-activates when the game runs{/if}
             {#if profile.id === configStore.activeProfileId}· <em>active</em>{/if}
           </div>
         </div>
+
+        {#if profile.id !== "default"}
+          <button
+            class="ghost"
+            onclick={() => (binding = binding === profile.id ? null : profile.id)}
+          >
+            {profile.applicationId ? "Change game" : "Bind to game"}
+          </button>
+        {/if}
 
         {#if profile.id !== configStore.activeProfileId}
           <button class="ghost" onclick={() => configStore.selectProfile(profile.id)}>
@@ -93,6 +122,13 @@
           </button>
         {/if}
       </div>
+      {#if binding === profile.id}
+        <GamePicker
+          value={profile.applicationId ?? null}
+          onselect={(app) => bind(profile.id, app)}
+          onclose={() => (binding = null)}
+        />
+      {/if}
     {/each}
   </div>
 </div>
@@ -156,6 +192,14 @@
 
   .profile.active {
     border-color: var(--accent);
+  }
+
+  .poster {
+    width: 36px;
+    height: 48px;
+    object-fit: cover;
+    border-radius: var(--radius-sm);
+    flex: none;
   }
 
   .icon {

@@ -68,6 +68,8 @@ pub async fn get_connected_devices(
     };
     let payload = DeviceListPayload::build(&manager, devices);
     let _ = app.emit(EVENT_DEVICES, &payload);
+    // Newly connected devices get their render fetched in the background.
+    crate::spawn_artwork_fetch(app, payload.devices.clone());
     Ok(payload)
 }
 
@@ -321,6 +323,8 @@ pub async fn create_profile(
             id: id.clone(),
             name,
             kind: kind.unwrap_or_else(|| "game".into()),
+            application_id: None,
+            poster_url: None,
             devices: Default::default(),
         });
         cfg.active_profile = id.clone();
@@ -376,6 +380,81 @@ pub async fn save_settings(store: State<'_, Store>, settings: Settings) -> Resul
 #[tauri::command]
 pub async fn get_config_path(store: State<'_, Store>) -> Result<String> {
     Ok(store.path().display().to_string())
+}
+
+// ---------------------------------------------------------------------------
+// Application database (game detection, per-game commands)
+// ---------------------------------------------------------------------------
+
+/// Emitted when the detected running game changes; payload is the application
+/// id, or `null` when no known game is running.
+pub const EVENT_ACTIVE_APPLICATION: &str = "active-application";
+
+#[tauri::command]
+pub async fn get_applications(db: State<'_, std::sync::Arc<crate::apps::AppDatabase>>) -> Result<Vec<crate::apps::Application>> {
+    Ok(db.applications())
+}
+
+#[tauri::command]
+pub async fn get_application_commands(
+    db: State<'_, std::sync::Arc<crate::apps::AppDatabase>>,
+    application_id: String,
+) -> Result<crate::apps::ApplicationCommands> {
+    db.commands(&application_id)
+        .ok_or_else(|| Error::other(format!("unknown application {application_id}")))
+}
+
+#[tauri::command]
+pub async fn get_application_database_info(
+    db: State<'_, std::sync::Arc<crate::apps::AppDatabase>>,
+) -> Result<Option<crate::apps::DatabaseInfo>> {
+    Ok(db.info())
+}
+
+/// Re-downloads the database from Logitech's public channel.
+#[tauri::command]
+pub async fn refresh_application_database(
+    db: State<'_, std::sync::Arc<crate::apps::AppDatabase>>,
+) -> Result<crate::apps::DatabaseInfo> {
+    let db = std::sync::Arc::clone(db.inner());
+    tauri::async_runtime::spawn_blocking(move || db.refresh())
+        .await
+        .map_err(|e| Error::other(e.to_string()))?
+}
+
+/// The application detected as running right now.
+#[tauri::command]
+pub async fn get_active_application(
+    db: State<'_, std::sync::Arc<crate::apps::AppDatabase>>,
+) -> Result<Option<String>> {
+    Ok(db.detect_running())
+}
+
+/// Binds a profile to an application so it activates when that game runs.
+#[tauri::command]
+pub async fn bind_profile_application(
+    store: State<'_, Store>,
+    db: State<'_, std::sync::Arc<crate::apps::AppDatabase>>,
+    profile_id: String,
+    application_id: Option<String>,
+) -> Result<Config> {
+    let app = application_id
+        .as_deref()
+        .and_then(|id| db.applications().into_iter().find(|a| a.id == id));
+    store.update(|cfg| {
+        if let Some(p) = cfg.profiles.iter_mut().find(|p| p.id == profile_id) {
+            p.application_id = application_id.clone();
+            p.poster_url = app.as_ref().and_then(|a| a.poster_url.clone());
+            if let Some(a) = &app {
+                p.kind = "game".into();
+                // Match G HUB's "GAME: Profile" naming unless the user renamed it.
+                if !p.name.contains(':') {
+                    p.name = format!("{}: {}", a.name, p.name);
+                }
+            }
+        }
+    })?;
+    Ok(store.get())
 }
 
 // ---------------------------------------------------------------------------
@@ -445,6 +524,59 @@ pub async fn get_artwork() -> Result<std::collections::HashMap<String, String>> 
         .into_iter()
         .map(|(key, path)| (key, path.display().to_string()))
         .collect())
+}
+
+/// Imports renders, thumbnails and zone/button layouts from a G HUB
+/// `ProgramData\\LGHUB` folder the user already has, and caches its depository
+/// so further devices can be fetched on demand.
+#[tauri::command]
+pub async fn import_ghub_program_data(path: String) -> Result<crate::depot::ImportReport> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::depot::import_program_data(std::path::Path::new(&path))
+    })
+    .await
+    .map_err(|e| Error::other(e.to_string()))?
+}
+
+/// Downloads a connected device's depot from Logitech's CDN — what G HUB does
+/// on first sight of a device — and imports it. Needs a cached depository.
+#[tauri::command]
+pub async fn fetch_device_artwork(
+    manager: State<'_, DeviceManager>,
+    device_id: String,
+) -> Result<crate::depot::ImportedDevice> {
+    let snapshot = manager.snapshot(&device_id).ok_or(Error::NotConnected)?;
+    let mut ids = snapshot.model_ids.clone();
+    ids.push(snapshot.product_id);
+    tauri::async_runtime::spawn_blocking(move || crate::depot::fetch_for_product_ids(&ids))
+        .await
+        .map_err(|e| Error::other(e.to_string()))?
+}
+
+/// Whether depots can be fetched (a depository has been imported).
+#[tauri::command]
+pub async fn get_ghub_cache_info() -> Result<Option<GhubCacheInfo>> {
+    Ok(crate::depot::load_cache().ok().map(|(d, defs)| GhubCacheInfo {
+        build_id: d.build_id,
+        version: d.version,
+        depots: d.depots.len(),
+        device_definitions: defs.len(),
+    }))
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GhubCacheInfo {
+    pub build_id: String,
+    pub version: String,
+    pub depots: usize,
+    pub device_definitions: usize,
+}
+
+/// The imported zone/button layout for a device, if any.
+#[tauri::command]
+pub async fn get_artwork_layout(product_ids: Vec<u16>) -> Result<Option<crate::depot::ArtworkLayout>> {
+    Ok(crate::artwork::layout_for(&product_ids))
 }
 
 /// Where to put artwork files; shown on the settings screen.

@@ -13,6 +13,11 @@
 #
 # Nothing is downloaded for a device that is not in the table below — drop a PNG
 # named <product-id>.png into the target directory by hand instead.
+#
+# Per-zone lighting masks are not downloadable: G HUB fetches them per device
+# from its own depot service, keyed by `render_icon_key` in the device schema.
+# If you have them, name them <product-id>-zone<N>.png alongside the base render
+# and OpenGHub will use the alpha channel as a mask.
 
 set -euo pipefail
 

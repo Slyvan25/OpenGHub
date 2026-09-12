@@ -7,8 +7,16 @@
 //! Files are matched on product id, lowercase hex, four digits:
 //!
 //! ```text
-//! ~/.local/share/openghub/devices/c08d.png    → G502 LIGHTSPEED
+//! ~/.local/share/openghub/devices/c08d.png          → base render
+//! ~/.local/share/openghub/devices/c08d-zone0.png    → mask for zone 0
+//! ~/.local/share/openghub/devices/c08d-zone1.png    → mask for zone 1
 //! ```
+//!
+//! The per-zone files are **masks**: their alpha channel marks where that zone's
+//! light falls, and the UI fills them with the live colour. This is the same
+//! model G HUB uses — its device descriptors carry a `render_icon_key` per zone
+//! pointing at an image, never coordinates — so a mask gives pixel-accurate
+//! lighting instead of an approximate blob.
 //!
 //! Note the lowercase directory: that is what `directories` produces on Linux,
 //! and `scripts/fetch-artwork.sh` must agree with it exactly.
@@ -18,8 +26,8 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-/// Extensions we will load, in preference order.
-const EXTENSIONS: [&str; 4] = ["png", "webp", "jpg", "jpeg"];
+/// Extensions we will load, in preference order. `json` only for `.layout.json`.
+const EXTENSIONS: [&str; 5] = ["png", "webp", "jpg", "jpeg", "json"];
 
 /// `$XDG_DATA_HOME/openghub/devices`, matching the config store's layout.
 pub fn dir() -> PathBuf {
@@ -38,6 +46,46 @@ pub fn ensure_dir() -> std::io::Result<PathBuf> {
 /// The key a file must be named after, e.g. `c08d`.
 pub fn key(product_id: u16) -> String {
     format!("{product_id:04x}")
+}
+
+/// True for `c08d`, `c08d-side`, `c08d-thumb`, `c08d-zone2`, `c08d.layout`.
+fn is_artwork_key(key: &str) -> bool {
+    let product = key
+        .split_once('-')
+        .map(|(p, _)| p)
+        .or_else(|| key.strip_suffix(".layout"))
+        .unwrap_or(key);
+    if !(product.len() == 4 && product.chars().all(|c| c.is_ascii_hexdigit())) {
+        return false;
+    }
+    match key.split_once('-') {
+        None => true,
+        Some((_, "side")) | Some((_, "thumb")) => true,
+        Some((_, rest)) => rest
+            .strip_prefix("zone")
+            .map(|z| !z.is_empty() && z.chars().all(|c| c.is_ascii_digit()))
+            .unwrap_or(false),
+    }
+}
+
+/// The `.layout.json` for a product id, parsed, if one was imported.
+pub fn layout_for(product_ids: &[u16]) -> Option<crate::depot::ArtworkLayout> {
+    let files = scan();
+    for pid in product_ids {
+        if let Some(path) = files.get(&format!("{}.layout", key(*pid))) {
+            if let Ok(text) = std::fs::read_to_string(path) {
+                if let Ok(layout) = serde_json::from_str(&text) {
+                    return Some(layout);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// The key a zone mask must be filed under.
+pub fn zone_key(product_id: u16, zone: u8) -> String {
+    format!("{}-zone{zone}", key(product_id))
 }
 
 /// Every artwork file present, keyed by product id.
@@ -61,9 +109,28 @@ pub fn scan() -> HashMap<String, PathBuf> {
         if !EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()) {
             continue;
         }
-        // Tolerate `046d_c08d.png` as well as `c08d.png`.
-        let key = stem.rsplit(['_', '-']).next().unwrap_or(stem).to_ascii_lowercase();
-        if key.len() == 4 && key.chars().all(|c| c.is_ascii_hexdigit()) {
+        let stem = stem.to_ascii_lowercase();
+        // Recognised forms, all keyed on the product id:
+        //   c08d.png          base render (front)      c08d-side.png    side view
+        //   c08d-thumb.png    dashboard thumbnail      c08d-zone1.png   zone mask
+        //   c08d.layout.json  zones + button positions from a G HUB depot
+        //   046d_c08d.png     tolerated alongside the bare form
+        let key = if let Some((product, suffix)) = stem.split_once('-') {
+            let product = product.rsplit('_').next().unwrap_or(product);
+            let suffix_ok = suffix == "side"
+                || suffix == "thumb"
+                || suffix.strip_prefix("zone").map(|z| !z.is_empty() && z.chars().all(|c| c.is_ascii_digit())).unwrap_or(false);
+            if !suffix_ok {
+                continue;
+            }
+            format!("{product}-{suffix}")
+        } else if stem.ends_with(".layout") {
+            let product = stem.trim_end_matches(".layout");
+            format!("{}.layout", product.rsplit('_').next().unwrap_or(product))
+        } else {
+            stem.rsplit('_').next().unwrap_or(&stem).to_string()
+        };
+        if is_artwork_key(&key) {
             found.entry(key).or_insert(path);
         }
     }
@@ -88,6 +155,21 @@ mod tests {
         // casing, the two silently stop agreeing and no artwork is ever found.
         let path = dir();
         assert!(path.ends_with("openghub/devices"), "got {}", path.display());
+    }
+
+    #[test]
+    fn zone_masks_get_their_own_keys() {
+        assert_eq!(zone_key(0xc08d, 1), "c08d-zone1");
+        assert!(is_artwork_key("c08d"));
+        assert!(is_artwork_key("c08d-zone0"));
+        assert!(is_artwork_key("407f-zone12"));
+        assert!(is_artwork_key("407f-side"));
+        assert!(is_artwork_key("407f-thumb"));
+        assert!(is_artwork_key("407f.layout"));
+        assert!(!is_artwork_key("notes"));
+        assert!(!is_artwork_key("c08d-zoneX"));
+        assert!(!is_artwork_key("c08d-back"));
+        assert!(!is_artwork_key("12345-zone1"));
     }
 
     #[test]

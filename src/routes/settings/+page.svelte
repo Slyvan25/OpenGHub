@@ -12,11 +12,62 @@
 
   let configPath = $state("");
   let pollSeconds = $state(60);
+  let ghubCache = $state<import("$lib/types").GhubCacheInfo | null>(null);
+  let importing = $state(false);
+  let fetching = $state(false);
+  let lastImport = $state<import("$lib/types").ImportReport | null>(null);
 
   onMount(async () => {
     configPath = await api.getConfigPath().catch(() => "unavailable");
     pollSeconds = configStore.settings.batteryPollSeconds;
+    ghubCache = await api.getGhubCacheInfo().catch(() => null);
   });
+
+  /** Lets the user point at their own G HUB ProgramData folder. */
+  async function importGhub() {
+    let path: string | null = null;
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const picked = await open({ directory: true, title: "Select the LGHUB folder from ProgramData" });
+      path = typeof picked === "string" ? picked : null;
+    } catch {
+      ui.toast("The folder picker needs the desktop app.", "error");
+      return;
+    }
+    if (!path) return;
+    importing = true;
+    try {
+      lastImport = await api.importGhubProgramData(path);
+      ghubCache = await api.getGhubCacheInfo().catch(() => null);
+      await artwork.load();
+      ui.toast(`Imported ${lastImport.imported.length} device(s) from G HUB build ${lastImport.buildId}.`, "success", 5000);
+    } catch (e) {
+      ui.toast(api.errorMessage(e), "error", 8000);
+    } finally {
+      importing = false;
+    }
+  }
+
+  /** Downloads depots for every connected device that has no artwork yet. */
+  async function fetchAll() {
+    fetching = true;
+    let done = 0;
+    try {
+      for (const d of deviceStore.devices) {
+        if (d.demo || !d.online) continue;
+        try {
+          await api.fetchDeviceArtwork(d.id);
+          done++;
+        } catch (e) {
+          ui.toast(`${d.name}: ${api.errorMessage(e)}`, "error", 6000);
+        }
+      }
+      await artwork.load();
+      if (done) ui.toast(`Fetched artwork for ${done} device(s) from Logitech.`, "success", 4000);
+    } finally {
+      fetching = false;
+    }
+  }
 
   async function save(patch: Partial<typeof configStore.settings>) {
     try {
@@ -62,6 +113,13 @@ KERNEL=="hidraw*", ATTRS{idVendor}=="046d", TAG+="uaccess"`;
       label="Battery notifications"
       description="Warn when a wireless device drops below 20 %."
       onchange={(v) => save({ showBatteryNotifications: v })}
+    />
+
+    <Toggle
+      checked={configStore.settings.autoSwitchProfiles}
+      label="Switch profiles with games"
+      description="Activate a profile bound to a game when it starts, and return to Desktop when it stops."
+      onchange={(v) => save({ autoSwitchProfiles: v })}
     />
 
     <Toggle
@@ -114,6 +172,47 @@ KERNEL=="hidraw*", ATTRS{idVendor}=="046d", TAG+="uaccess"`;
       what turns the <code>uaccess</code> tag into an ACL, so a higher-numbered file is tagged
       too late to have any effect.
     </p>
+  </section>
+
+  <section class="card panel">
+    <h2 class="section-title">G HUB data</h2>
+    <p class="lede">
+      G HUB stores each device's render, thumbnail and the exact positions of its lighting
+      zones and buttons in a per-device <em>depot</em>. Point OpenGHub at a G HUB installation's
+      <code>C:\ProgramData\LGHUB</code> folder and it imports what is there — and caches the
+      depot index, so any device you connect later is fetched straight from Logitech's CDN the
+      same way G HUB does it.
+    </p>
+    {#if ghubCache}
+      <dl class="facts">
+        <div><dt>Build</dt><dd>{ghubCache.buildId} · {ghubCache.version}</dd></div>
+        <div><dt>Depots indexed</dt><dd>{ghubCache.depots}</dd></div>
+        <div><dt>Devices known</dt><dd>{ghubCache.deviceDefinitions}</dd></div>
+      </dl>
+    {:else}
+      <p class="lede small">No G HUB data imported yet — automatic fetching is unavailable until then.</p>
+    {/if}
+    <div class="actions">
+      <button class="ghost" onclick={importGhub} disabled={importing}>
+        <Icon name="chip" size={14} />
+        {importing ? "Importing…" : "Import from G HUB folder"}
+      </button>
+      <button class="ghost" onclick={fetchAll} disabled={fetching || !ghubCache}>
+        <Icon name="refresh" size={14} />
+        {fetching ? "Fetching…" : "Fetch artwork for connected devices"}
+      </button>
+    </div>
+    {#if lastImport}
+      <p class="lede small">
+        Imported: {lastImport.imported.map((d) => d.displayName).join(", ") || "nothing new"}.
+      </p>
+    {/if}
+    <Toggle
+      checked={configStore.settings.autoFetchArtwork}
+      label="Fetch artwork automatically"
+      description="Download a device's depot from Logitech the first time it is seen, as G HUB does."
+      onchange={(v) => save({ autoFetchArtwork: v })}
+    />
   </section>
 
   <section class="card panel">

@@ -15,10 +15,11 @@
   import DeviceWorkspace from "$lib/components/DeviceWorkspace.svelte";
   import Icon, { type IconName } from "$lib/components/Icon.svelte";
   import { artworkIds } from "$lib/device-ui";
-  import { controlSpots } from "$lib/zones";
+  import { artwork } from "$lib/stores/artwork.svelte";
+  import { controlSpots, type ControlSpot } from "$lib/zones";
   import { configStore } from "$lib/stores/config.svelte";
   import { ui } from "$lib/stores/ui.svelte";
-  import type { Assignment, Device } from "$lib/types";
+  import type { ApplicationCommands, Assignment, Device } from "$lib/types";
 
   interface Props {
     device: Device;
@@ -196,6 +197,50 @@
   /** Which library group the panel is showing, like G HUB's sub-tabs. */
   let group = $state("Commands");
 
+  // -- game commands ----------------------------------------------------------
+  //
+  // When the active profile is bound to a game, G HUB's COMMANDS tab shows that
+  // game's own keybinds from Logitech's database, grouped by category with the
+  // category colours. Otherwise the generic editing commands are shown.
+
+  let gameCommands = $state<ApplicationCommands | null>(null);
+  let gameFor = $state<string | null>(null);
+
+  $effect(() => {
+    const appId = configStore.active?.applicationId ?? null;
+    if (appId === gameFor) return;
+    gameFor = appId;
+    if (!appId) {
+      gameCommands = null;
+      return;
+    }
+    untrack(() =>
+      api
+        .getApplicationCommands(appId)
+        .then((c) => (gameCommands = c))
+        .catch(() => (gameCommands = null)),
+    );
+  });
+
+  /** Game commands as library groups, one per category, coloured. */
+  const gameGroups = $derived.by(() => {
+    if (!gameCommands) return [];
+    const q = search.trim().toLowerCase();
+    const colour = new Map(gameCommands.categoryColors.map((c) => [c.tag, c.hex]));
+    const byCategory = new Map<string, Command[]>();
+    for (const c of gameCommands.commands) {
+      if (q && !c.name.toLowerCase().includes(q)) continue;
+      const list = byCategory.get(c.category) ?? [];
+      list.push({ category: "key", label: c.name, value: c.keystroke.join("+") });
+      byCategory.set(c.category, list);
+    }
+    return [...byCategory].map(([name, items]) => ({
+      name,
+      colour: colour.get(name) ?? null,
+      items,
+    }));
+  });
+
   // -- macros ---------------------------------------------------------------
 
   let macros = $state<MacroDef[]>([]);
@@ -287,9 +332,37 @@
       writing = false;
     }
   }
-  const spots = $derived(controlSpots(device.kind));
-  /** Only controls we have a position for can be drawn on the render. */
-  const placed = $derived(controls.filter((c) => spots[c.id]));
+  /**
+   * Button positions. An imported G HUB layout is authoritative — it is the
+   * exact marker/label geometry G HUB draws — and adds any buttons the generic
+   * table does not know. Otherwise the per-category guesses apply.
+   */
+  const layout = $derived(artwork.layoutFor(artworkIds(device)));
+  const spots = $derived.by<Record<string, ControlSpot>>(() => {
+    const generic = controlSpots(device.kind);
+    const front = layout?.views.find((v) => v.view === "front");
+    if (!front) return generic;
+    const exact: Record<string, ControlSpot> = {};
+    for (const c of front.controls) {
+      // Labels beyond the image edge are clamped into the margins we draw.
+      const lx = c.side === "left" ? 0.02 : c.side === "right" ? 0.98 : c.labelX;
+      const ly = c.side === "top" ? 0.02 : c.labelY;
+      exact[c.control] = {
+        dot: { x: c.markerX, y: c.markerY },
+        label: { x: lx, y: ly },
+        side: c.side,
+      };
+    }
+    return { ...generic, ...exact };
+  });
+  /** Controls with a position, including layout-only ones not in the list. */
+  const placed = $derived.by(() => {
+    const known = controls.filter((c) => spots[c.id]);
+    const extra = Object.keys(spots)
+      .filter((id) => !controls.some((c) => c.id === id))
+      .map((id) => ({ id, label: id.replace("button-", "G"), fallback: "Unassigned" }));
+    return [...known, ...extra];
+  });
   const activeGroup = $derived(filtered.find((g) => g.name === group) ?? filtered[0]);
 </script>
 
@@ -359,6 +432,32 @@
           <Icon name="chip" size={14} />
           {writing ? "Writing…" : "Re-write macros to device"}
         </button>
+      </div>
+    {:else if group === "Commands" && gameCommands}
+      <div class="commands">
+        <p class="hint game-head">
+          <strong>{gameCommands.name}</strong> — {gameCommands.commands.length} commands from
+          Logitech's database.
+        </p>
+        {#each gameGroups as g (g.name)}
+          <div class="game-cat">
+            <span class="swatch" style="background: {g.colour ?? 'var(--text-dimmer)'}"></span>
+            {g.name}
+          </div>
+          {#each g.items as item (item.label)}
+            <button
+              class="command"
+              draggable="true"
+              ondragstart={(e) => onDragStart(e, item)}
+              onclick={() => assign(selected, item)}
+            >
+              <span class="command-key">{item.value || "—"}</span>
+              <span class="command-name">{item.label}</span>
+            </button>
+          {/each}
+        {:else}
+          <p class="hint">No commands match “{search}”.</p>
+        {/each}
       </div>
     {:else}
     <div class="commands">
@@ -500,6 +599,26 @@
     display: flex;
     flex-direction: column;
     overflow-y: auto;
+  }
+
+  .game-head {
+    padding: 4px 6px 8px;
+  }
+
+  .game-cat {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 6px 4px;
+    font-family: var(--font);
+    font-size: 12.5px;
+    font-weight: 600;
+  }
+
+  .swatch {
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
   }
 
   .command {

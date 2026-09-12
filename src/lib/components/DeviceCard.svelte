@@ -85,7 +85,7 @@
   </header>
 
   <div class="art">
-    <DeviceArt kind={device.kind} productIds={artworkIds(device)} {glow} {brightness} />
+    <DeviceArt kind={device.kind} productIds={artworkIds(device)} variant="thumb" {glow} {brightness} />
   </div>
 
   {#if device.lastError}

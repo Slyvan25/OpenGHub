@@ -5,11 +5,13 @@
 
 <script lang="ts">
   import { artwork } from "$lib/stores/artwork.svelte";
-  import { spotFor } from "$lib/zones";
+  import { spotFor, type ZoneSpot } from "$lib/zones";
   import type { DeviceKind } from "$lib/types";
 
   /** One lit zone, positioned on the art by its reported location. */
   export interface ZoneGlow {
+    /** Zone index, used to key any user-dragged position. */
+    index: number;
     locationName: string;
     /** `#rrggbb`, or `null` when the zone is off. */
     color: string | null;
@@ -28,11 +30,23 @@
      * show the same zones lit as the real device.
      */
     zones?: ZoneGlow[];
+    /** Product ids, so per-model zone positions can be looked up. */
+    zoneProductIds?: number[];
+    /** User-dragged glow positions, keyed by zone index. */
+    zoneOverrides?: Record<string, ZoneSpot>;
+    /**
+     * Turns on drag handles so the user can place each glow on their own
+     * artwork — the only way to be right, since the device reports no position.
+     */
+    editZones?: boolean;
+    onzonemove?: (index: number, spot: ZoneSpot) => void;
     /**
      * Product ids to look for user-supplied artwork under, best first. Falls
      * back to the SVG when there is no file, or when one fails to decode.
      */
     productIds?: number[];
+    /** `thumb` for dashboard cards (G HUB ships a separate small render). */
+    variant?: "front" | "thumb" | "side";
     class?: string;
   }
 
@@ -41,23 +55,88 @@
     glow = null,
     brightness = 100,
     zones = [],
+    zoneProductIds = [],
+    zoneOverrides = {},
+    editZones = false,
+    onzonemove,
     productIds = [],
+    variant = "front",
     class: className = "",
   }: Props = $props();
 
   let imageFailed = $state(false);
-  const photo = $derived(
-    productIds.length > 0 && !imageFailed ? artwork.forProductIds(productIds) : null,
-  );
+  const photo = $derived.by(() => {
+    if (productIds.length === 0 || imageFailed) return null;
+    if (variant === "thumb") return artwork.thumbFor(productIds);
+    if (variant === "side") return artwork.sideFor(productIds) ?? artwork.forProductIds(productIds);
+    return artwork.forProductIds(productIds);
+  });
+
+  /**
+   * Zone rectangles from an imported G HUB depot, in the image's own
+   * coordinate space. When present these are authoritative: they are what
+   * G HUB itself draws, so no positioning or masks are needed.
+   */
+  const layoutView = $derived.by(() => {
+    const layout = artwork.layoutFor(zoneProductIds);
+    if (!layout) return null;
+    const want = variant === "side" ? "side" : "front";
+    return layout.views.find((v) => v.view === want) ?? layout.views[0] ?? null;
+  });
 
   const uid = `art${seq++}`;
 
-  /** Zones that are actually on, with their position on the art. */
-  const litZones = $derived(
-    zones
-      .filter((z) => z.color && z.brightness > 0)
-      .map((z, i) => ({ ...z, spot: spotFor(kind, z.locationName, i) })),
+  const placed = $derived(
+    zones.map((z) => ({
+      ...z,
+      /** Exact rectangle from the depot layout, matched on HID++ location name. */
+      rect: layoutView?.zones.find((r) => r.locationName === z.locationName) ?? null,
+      /** A user-supplied mask beats any guessed position. */
+      mask: artwork.maskFor(zoneProductIds, z.index),
+      spot: spotFor(kind, z.locationName, z.index, {
+        productIds: zoneProductIds,
+        overrides: zoneOverrides,
+      }),
+    })),
   );
+
+  /** Zones that are actually on. In edit mode every zone stays visible. */
+  const litZones = $derived(
+    editZones ? placed : placed.filter((z) => z.color && z.brightness > 0),
+  );
+
+  let artBox: HTMLDivElement | undefined = $state();
+  let dragging = $state<number | null>(null);
+  let boxW = $state(1);
+  let boxH = $state(1);
+
+  // The photo is `object-fit: contain` with 4% padding, so the image occupies
+  // a centred sub-rectangle of the box. Layout coordinates are fractions of
+  // the *image*, so map them into that sub-rectangle.
+  const PAD = 0.04;
+  const imgAspect = $derived(layoutView ? layoutView.width / layoutView.height : 1);
+  const inner = $derived({ w: boxW * (1 - 2 * PAD), h: boxH * (1 - 2 * PAD) });
+  const fit = $derived.by(() => {
+    const boxAspect = inner.w / Math.max(1, inner.h);
+    if (imgAspect > boxAspect) {
+      const w = inner.w;
+      return { w, h: w / imgAspect };
+    }
+    const h = inner.h;
+    return { w: h * imgAspect, h };
+  });
+  const imgW = $derived((fit.w / Math.max(1, boxW)) * 100);
+  const imgH = $derived((fit.h / Math.max(1, boxH)) * 100);
+  const imgLeft = $derived(((boxW - fit.w) / 2 / Math.max(1, boxW)) * 100);
+  const imgTop = $derived(((boxH - fit.h) / 2 / Math.max(1, boxH)) * 100);
+
+  function moveZone(event: PointerEvent, index: number, spot: ZoneSpot) {
+    if (!artBox) return;
+    const rect = artBox.getBoundingClientRect();
+    const x = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
+    const y = Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height));
+    onzonemove?.(index, { ...spot, x, y });
+  }
 
   // The SVG drawings take a single colour. With per-zone data, use the first
   // lit zone so the drawing still reflects something sensible.
@@ -90,20 +169,75 @@
       location. That reads much closer to the real device than tinting the
       whole picture.
     -->
-    <div class="photo-wrap">
+    <div
+      class="photo-wrap"
+      bind:this={artBox}
+      bind:clientWidth={boxW}
+      bind:clientHeight={boxH}
+    >
       <img src={photo} alt="" class="photo" onerror={() => (imageFailed = true)} />
-      {#each litZones as zone (zone.locationName)}
-        <div
-          class="zone-glow"
-          style="
-            left: {zone.spot.x * 100}%;
-            top: {zone.spot.y * 100}%;
-            width: {zone.spot.r * 200}%;
-            padding-bottom: {zone.spot.r * 200}%;
-            background: radial-gradient(closest-side, {zone.color} 0%, {zone.color}80 45%, transparent 72%);
-            opacity: {0.35 + (zone.brightness / 100) * 0.65};
-          "
-        ></div>
+      {#each litZones as zone (zone.index)}
+        {#if zone.rect && layoutView}
+          <!--
+            Rect route: the zone's own rectangle from G HUB's metadata, placed
+            over the letterboxed image. A soft-edged fill reads like the LED
+            bleeding through the shell.
+          -->
+          <div
+            class="zone-rect"
+            style="
+              left: {imgLeft + zone.rect.x * imgW}%;
+              top: {imgTop + zone.rect.y * imgH}%;
+              width: {zone.rect.width * imgW}%;
+              height: {zone.rect.height * imgH}%;
+              background: radial-gradient(ellipse at center, {zone.color ?? '#888'} 0%, {zone.color ?? '#888'}aa 45%, transparent 75%);
+              opacity: {editZones && !zone.color ? 0.3 : 0.45 + (zone.brightness / 100) * 0.55};
+            "
+          ></div>
+        {:else if zone.mask}
+          <!--
+            Mask route: the zone's own image defines exactly which pixels light
+            up, filled with the live colour. Same approach as G HUB.
+          -->
+          <div
+            class="zone-mask"
+            style="
+              background: {zone.color ?? '#888'};
+              mask-image: url({zone.mask});
+              -webkit-mask-image: url({zone.mask});
+              opacity: {editZones && !zone.color ? 0.3 : 0.4 + (zone.brightness / 100) * 0.6};
+            "
+          ></div>
+        {:else}
+          <div
+            class="zone-glow"
+            style="
+              left: {zone.spot.x * 100}%;
+              top: {zone.spot.y * 100}%;
+              width: {zone.spot.r * 200}%;
+              padding-bottom: {zone.spot.r * 200}%;
+              background: radial-gradient(closest-side, {zone.color ?? '#888'} 0%, {zone.color ?? '#888'}80 45%, transparent 72%);
+              opacity: {editZones && !zone.color ? 0.3 : 0.35 + (zone.brightness / 100) * 0.65};
+            "
+          ></div>
+        {/if}
+        {#if editZones && !zone.mask && !zone.rect}
+          <button
+            class="zone-handle"
+            class:dragging={dragging === zone.index}
+            style="left: {zone.spot.x * 100}%; top: {zone.spot.y * 100}%"
+            aria-label="Move the {zone.locationName} zone"
+            onpointerdown={(e) => {
+              (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+              dragging = zone.index;
+              moveZone(e, zone.index, zone.spot);
+            }}
+            onpointermove={(e) => dragging === zone.index && moveZone(e, zone.index, zone.spot)}
+            onpointerup={() => (dragging = null)}
+          >
+            {zone.locationName}
+          </button>
+        {/if}
       {/each}
       {#if litZones.length === 1}
         <!-- A single zone also throws light onto the surroundings. -->
@@ -388,6 +522,53 @@
        underneath stays visible the way a real LED behaves. */
     mix-blend-mode: screen;
     transition: opacity 200ms var(--ease), background 200ms var(--ease);
+  }
+
+  .zone-mask {
+    position: absolute;
+    inset: 4%;
+    pointer-events: none;
+    /* `contain` + centre matches how the base render is laid out, so the mask
+       lines up with the photo at any size. */
+    mask-repeat: no-repeat;
+    mask-position: center;
+    mask-size: contain;
+    -webkit-mask-repeat: no-repeat;
+    -webkit-mask-position: center;
+    -webkit-mask-size: contain;
+    mix-blend-mode: screen;
+    transition: opacity 200ms var(--ease), background 200ms var(--ease);
+  }
+
+  .zone-rect {
+    position: absolute;
+    pointer-events: none;
+    border-radius: 18%;
+    filter: blur(6px);
+    mix-blend-mode: screen;
+    transition: opacity 200ms var(--ease), background 200ms var(--ease);
+  }
+
+  .zone-handle {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    padding: 3px 9px;
+    border: 1px solid var(--cyan);
+    border-radius: var(--radius-pill);
+    background: rgba(0, 0, 0, 0.72);
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text);
+    cursor: grab;
+    touch-action: none;
+    white-space: nowrap;
+  }
+
+  .zone-handle.dragging {
+    cursor: grabbing;
+    background: var(--cyan);
+    color: #04222b;
   }
 
   .ambient {
