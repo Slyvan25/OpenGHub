@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="20px" height="19px" viewBox="0 0 20 19" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    <title>Icon/Status/Paired Copy 2</title>
+    <g id="8.-Additional-States" stroke="none" stroke-width="1" fill="none" fill-rule="evenodd">
+        <g id="04_Timed-Out" transform="translate(-346.000000, -494.000000)">
+            <g id="Note" transform="translate(344.000000, 492.000000)">
+                <g id="Group-11" transform="translate(2.000000, 1.000000)">
+                    <path d="M9.69397871,2.25229667 C9.93762905,2.17399762 10.2111495,2.18864804 10.4567886,2.31480683 C10.6426807,2.41027992 10.793992,2.56159122 10.8894651,2.74748336 L10.8894651,2.74748336 L18.4884255,17.5431386 C18.6145843,17.7887777 18.6292347,18.0622982 18.5509357,18.3059485 C18.4726366,18.5495989 18.3013881,18.7633791 18.055749,18.8895379 L18.055749,18.8895379 L2.40096681,19 C2.12482443,19 1.87482443,18.8880712 1.69386003,18.7071068 C1.51289562,18.5261424 1.40096681,18.2761424 1.40096681,18 L1.40096681,18 L9.11038931,2.74748336 C9.2365481,2.50184425 9.45032836,2.33059573 9.69397871,2.25229667 Z" id="Triangle-3" stroke="#FF4464" stroke-width="2"></path>
+                    <rect id="Rectangle-12" fill="#FF4464" x="8.75" y="7.94117647" width="2.5" height="5"></rect>
+                    <ellipse id="Oval-5" fill="#FF4464" cx="10" cy="15.2941176" rx="1.25" ry="1.17647059"></ellipse>
+                </g>
+            </g>
+        </g>
+    </g>
+</svg>

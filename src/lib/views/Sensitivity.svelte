@@ -2,11 +2,9 @@
   /** Sensitivity (DPI) — stages, pointer speed and report rate. */
   import { untrack } from "svelte";
   import * as api from "$lib/api";
-  import DeviceArt from "$lib/components/DeviceArt.svelte";
   import DeviceWorkspace from "$lib/components/DeviceWorkspace.svelte";
-  import DpiStages from "$lib/components/DpiStages.svelte";
+  import DpiSlider from "$lib/components/DpiSlider.svelte";
   import Icon from "$lib/components/Icon.svelte";
-  import Segmented from "$lib/components/Segmented.svelte";
   import { artworkIds } from "$lib/device-ui";
   import { configStore } from "$lib/stores/config.svelte";
   import { deviceStore } from "$lib/stores/devices.svelte";
@@ -24,6 +22,7 @@
 
   let stages = $state<number[]>([]);
   let activeStage = $state(0);
+  let shiftStage = $state<number | null>(null);
   let busy = $state(false);
 
   /** Which device the editor below has been seeded for. */
@@ -43,6 +42,7 @@
       if (saved.dpiStages.length) {
         stages = [...saved.dpiStages];
         activeStage = Math.min(saved.activeStage, saved.dpiStages.length - 1);
+        shiftStage = saved.shiftStage ?? null;
       } else if (dpi) {
         const seeded = defaultStages(dpi.current, dpi.min, dpi.max);
         const index = seeded.indexOf(dpi.current);
@@ -66,7 +66,33 @@
       ...profile,
       dpiStages: stages,
       activeStage,
+      shiftStage,
     });
+  }
+
+  function onStagesChange(next: number[], active: number, shift: number | null) {
+    stages = next;
+    activeStage = active;
+    shiftStage = shift;
+    persist();
+  }
+
+  /** G HUB's "click this ◆": marks the current speed as the DPI-shift speed. */
+  function markShift() {
+    shiftStage = shiftStage === activeStage ? null : activeStage;
+    persist();
+  }
+
+  /** Back to the device's own default DPI as a single stage, at its top rate. */
+  async function restoreDefaults() {
+    if (!dpi) return;
+    stages = defaultStages(dpi.default, dpi.min, dpi.max);
+    const idx = stages.indexOf(dpi.default);
+    activeStage = idx >= 0 ? idx : 0;
+    shiftStage = null;
+    await applyDpi(stages[activeStage]);
+    const top = device.reportRate?.availableHz?.length ? Math.max(...device.reportRate.availableHz) : null;
+    if (top && device.reportRate?.currentHz !== top) await applyRate(top);
   }
 
   async function applyDpi(value: number) {
@@ -100,167 +126,309 @@
     }
   }
 
-  const rateOptions = $derived(
-    (device.reportRate?.availableHz ?? []).map((hz) => ({
-      value: hz,
-      label: hz >= 1000 ? `${hz / 1000}K` : `${hz}`,
-    })),
-  );
+  /** G HUB lists rates fastest first. */
+  const rateOptions = $derived([...(device.reportRate?.availableHz ?? [])].sort((a, b) => b - a));
 </script>
 
-<DeviceWorkspace title="Sensitivity (DPI)">
+<DeviceWorkspace title="Sensitivity (DPI)" stageAlign="top">
   {#snippet panel()}
-    {#if dpi}
-      <DpiStages
-        bind:stages
-        bind:activeStage
-        min={dpi.min}
-        max={dpi.max}
-        step={dpi.step || 50}
-        {allowed}
-        onchange={persist}
-        onselect={persist}
-        oncommit={applyDpi}
-      />
+    <p class="copy">
+      DPI is the speed of your mouse on the screen. Use DPI buttons on your mouse to quickly
+      change the DPI speed.
+    </p>
 
-      <dl class="facts">
-        <div><dt>Sensor range</dt><dd>{dpi.min.toLocaleString()} – {dpi.max.toLocaleString()}</dd></div>
-        <div><dt>Granularity</dt><dd>{dpi.step ? `${dpi.step} DPI` : `${dpi.steps.length} presets`}</dd></div>
-        <div><dt>Device default</dt><dd>{dpi.default.toLocaleString()} DPI</dd></div>
-        <div><dt>Reported now</dt><dd>{dpi.current.toLocaleString()} DPI</dd></div>
-      </dl>
+    {#if dpi}
+      <div class="section">
+        <span class="label">DPI speeds</span>
+        <div class="speeds">
+          {#each stages as value, i (i)}
+            <button
+              class="speed"
+              class:current={i === activeStage}
+              class:shift={i === shiftStage}
+              onclick={() => {
+                if (i === activeStage) return;
+                activeStage = i;
+                persist();
+                applyDpi(value);
+              }}
+            >
+              {value.toLocaleString()}
+            </button>
+          {/each}
+        </div>
+      </div>
+
+      <p class="copy">
+        Your CURRENT DPI SPEED is underlined. Hold down a <span class="shift-word">DPI SHIFT</span>
+        button to quickly toggle to another speed while gaming.
+      </p>
+
+      <a class="assign" href="/device/{device.id}/assignments">
+        <Icon name="assignments" size={18} strokeWidth={1.8} />
+        <span>Assign these to your mouse</span>
+      </a>
     {:else}
-      <p class="hint">This device has no adjustable sensor.</p>
+      <p class="copy">This device has no adjustable sensor.</p>
     {/if}
 
-    <div class="rate">
-      <span class="label">Report rate</span>
+    <div class="section">
+      <span class="label">Report rate (per second)</span>
       {#if device.reportRate && rateOptions.length}
-        <Segmented
-          value={device.reportRate.currentHz}
-          options={rateOptions}
-          disabled={busy}
-          onselect={applyRate}
-        />
-        <p class="hint">
-          <Icon name="info" size={12} />
-          {device.reportRate.extended
-            ? "HID++ feature 0x8061 (extended report rate)."
-            : "HID++ feature 0x8060."}
-          A device running its onboard profile owns this setting, so OpenGHub takes host mode
-          when it has to. The device returns to its own profile when reconnected.
-        </p>
+        <p class="copy">Choose how often the mouse reports information to your computer.</p>
+        <div class="rates" role="radiogroup" aria-label="Report rate">
+          {#each rateOptions as hz (hz)}
+            <button
+              class="rate"
+              role="radio"
+              aria-checked={device.reportRate.currentHz === hz}
+              disabled={busy}
+              onclick={() => applyRate(hz)}
+            >
+              <span class="rate-value">{hz}</span>
+              <span class="radio" class:on={device.reportRate.currentHz === hz}></span>
+            </button>
+          {/each}
+        </div>
       {:else}
-        <p class="hint">This device runs at a fixed report rate.</p>
+        <p class="copy">This device runs at a fixed report rate.</p>
       {/if}
     </div>
 
-    <p class="hint foot">
-      {#if busy}Applying…{:else}Stored in <strong>{configStore.active?.name}</strong>.{/if}
-    </p>
+    <button class="restore" onclick={restoreDefaults} disabled={busy || !dpi}>Restore default settings</button>
   {/snippet}
 
   {#snippet stage()}
-    <div class="stage-inner">
-      <DeviceArt kind={device.kind} productIds={artworkIds(device)} class="render" />
-      <div class="readout">
-        <span class="big">{(stages[activeStage] ?? dpi?.current ?? 0).toLocaleString()}</span>
-        <span class="unit">DPI</span>
+    {#if dpi}
+      <div class="stage-inner">
+        <h2>DPI speeds</h2>
+        <div class="legend">
+          <span class="diamond"></span>
+          <span>DPI shift speed</span>
+        </div>
+        <p class="stage-copy">Click on the DPI speed number to change it manually.</p>
+
+        <DpiSlider
+          {stages}
+          {activeStage}
+          {shiftStage}
+          min={dpi.min}
+          max={dpi.max}
+          step={dpi.step || 50}
+          {allowed}
+          disabled={busy}
+          onchange={onStagesChange}
+          oncommit={(value) => applyDpi(value)}
+        />
+
+        <div class="notes">
+          <p>To delete a DPI speed, drag it off the slider.</p>
+          <p class="shift-note">
+            To change the current speed to the DPI Shift speed, click this:
+            <button class="diamond-btn" onclick={markShift} aria-label="Mark the current speed as the DPI shift speed">
+              <span class="diamond"></span>
+            </button>
+          </p>
+        </div>
       </div>
-    </div>
+    {/if}
   {/snippet}
 </DeviceWorkspace>
 
 <style>
-  .stage-inner {
+  .copy {
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text);
+  }
+
+  .section {
     display: flex;
     flex-direction: column;
-    align-items: center;
-    gap: 14px;
-    width: 100%;
-    height: 100%;
-    min-height: 0;
+    gap: 10px;
   }
 
-  .stage-inner :global(.render) {
-    flex: 1;
-    min-height: 0;
-  }
-
-  .readout {
-    display: flex;
-    align-items: baseline;
-    gap: 9px;
-  }
-
-  .big {
-    font-family: var(--font);
-    font-size: 44px;
-    font-weight: 600;
-    line-height: 1;
-  }
-
-  .unit {
+  .label {
     font-size: 12px;
-    letter-spacing: 0.2em;
-    color: var(--text-dim);
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--text-label);
+  }
+
+  .speeds {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .speed {
+    padding: 2px 0 4px;
+    font-family: var(--font);
+    font-size: 17px;
+    font-weight: 700;
+    color: var(--text);
+    border-bottom: 2px solid transparent;
+  }
+
+  .speed:hover {
+    color: var(--accent);
+  }
+
+  .speed.current {
+    border-bottom-color: currentColor;
+  }
+
+  .speed.shift,
+  .shift-word {
+    color: #f5b400;
+  }
+
+  .assign {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    color: var(--text);
+  }
+
+  .assign:hover {
+    color: var(--accent);
+  }
+
+  .rates {
+    display: flex;
+    gap: 6px;
   }
 
   .rate {
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    padding-top: 18px;
-    border-top: 1px solid var(--line);
-  }
-
-  .label {
-    font-size: 11px;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
+    align-items: center;
+    gap: 12px;
+    width: 44px;
+    padding: 4px 0;
+    font-family: var(--font);
     color: var(--text-dim);
   }
 
-  .facts {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 12px;
+  .rate-value {
+    font-size: 12px;
+    font-weight: 700;
   }
 
-  .facts div {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
+  .radio {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    border: 1.5px solid var(--text);
   }
 
-  dt {
-    font-size: 10.5px;
+  .radio.on {
+    background: var(--text);
+  }
+
+  .rate:disabled {
+    opacity: 0.6;
+  }
+
+  .restore {
+    width: 100%;
+    margin-top: 6px;
+    padding: 9px;
+    border-radius: 4px;
+    background: var(--surface-3);
+    font-size: 11px;
+    font-weight: 700;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: var(--text-dimmer);
+    color: var(--text);
   }
 
-  dd {
-    font-family: var(--font);
-    font-size: 14px;
-    font-weight: 600;
+  .restore:hover:not(:disabled) {
+    background: #454545;
   }
 
-  .hint {
+  .restore:disabled {
+    opacity: 0.5;
+  }
+
+  /* ---- stage ------------------------------------------------------------ */
+  .stage-inner {
     display: flex;
-    align-items: flex-start;
-    gap: 6px;
-    font-size: 11.5px;
-    color: var(--text-dimmer);
-    line-height: 1.5;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+    max-width: 680px;
+    padding-top: 10px;
   }
 
-  .hint strong {
-    color: var(--text-dim);
-    font-weight: 600;
+  h2 {
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.4px;
+    text-transform: uppercase;
   }
 
-  .foot {
-    margin-top: auto;
+  .legend {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 34px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .diamond {
+    display: inline-block;
+    width: 11px;
+    height: 11px;
+    border-radius: 2px;
+    background: #f5b400;
+    transform: rotate(45deg);
+  }
+
+  .stage-copy {
+    margin-top: 14px;
+    font-size: 12px;
+  }
+
+  .stage-inner :global(.dpi-slider) {
+    margin-top: 30px;
+  }
+
+  .notes {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    margin-top: 60px;
+    font-size: 12px;
+  }
+
+  .shift-note {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 700;
+    color: #f5b400;
+  }
+
+  .diamond-btn {
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+  }
+
+  .diamond-btn:hover .diamond {
+    transform: rotate(45deg) scale(1.2);
   }
 </style>

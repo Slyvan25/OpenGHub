@@ -13,7 +13,6 @@ export interface Toast {
 const VIEW_KEY = "openghub.view";
 
 class UiStore {
-  navOpen = $state(false);
   profilePickerOpen = $state(false);
   view = $state<DashboardView>("grid");
   toasts = $state<Toast[]>([]);

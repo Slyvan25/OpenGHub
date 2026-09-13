@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="36px" height="34px" viewBox="0 0 36 34" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    <title>Star</title>
+    <g id="Page-1" stroke="none" stroke-width="1" fill="none" fill-rule="evenodd">
+        <g id="1-copy-3" transform="translate(-236.000000, -715.000000)" stroke="#00A9E0" stroke-width="2">
+            <g id="Banner" transform="translate(0.000000, 700.000000)">
+                <g id="stars-filled" transform="translate(238.000000, 18.000000)">
+                    <polygon id="Star" points="16 24 6.59543596 28.9442719 8.39154787 18.472136 0.783095739 11.0557281 11.297718 9.52786405 16 0 20.702282 9.52786405 31.2169043 11.0557281 23.6084521 18.472136 25.404564 28.9442719"></polygon>
+                </g>
+            </g>
+        </g>
+    </g>
+</svg>

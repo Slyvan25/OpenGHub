@@ -10,8 +10,10 @@
   import DeviceWorkspace from "$lib/components/DeviceWorkspace.svelte";
   import Icon from "$lib/components/Icon.svelte";
   import Slider from "$lib/components/Slider.svelte";
-  import { artworkIds } from "$lib/device-ui";
+  import { artworkIds, batteryIcon, batteryLabel } from "$lib/device-ui";
+  import { artwork } from "$lib/stores/artwork.svelte";
   import { configStore } from "$lib/stores/config.svelte";
+  import { deviceStore } from "$lib/stores/devices.svelte";
   import { ui } from "$lib/stores/ui.svelte";
   import type { Device, LightEffectName, LightingSettings, ZoneInfo } from "$lib/types";
   import type { ZoneSpot } from "$lib/zones";
@@ -33,7 +35,7 @@
     off: "Off",
     fixed: "Fixed",
     breathing: "Breathing",
-    cycle: "Colour cycle",
+    cycle: "Cycle",
   };
 
   const DEFAULTS: LightingSettings = {
@@ -57,6 +59,9 @@
   let positions = $state<Record<string, ZoneSpot>>({});
 
   const current = $derived(byZone[String(activeZone)] ?? DEFAULTS);
+  /** With a depot layout the zones already sit where the LEDs are. */
+  const hasLayout = $derived(artwork.layoutFor(artworkIds(device)) !== null);
+  let syncingOptions = $state(false);
   const zoneInfo = $derived(zones.find((z) => z.index === activeZone));
   /** Only offer effects this particular zone advertises. */
   const available = $derived(
@@ -103,6 +108,13 @@
     positions = { ...(profile.zonePositions ?? {}) };
     activeZone = zones[0]?.index ?? 0;
     loading = false;
+
+    // Cache the zone names so the dashboard can render per-zone lighting
+    // without a HID++ round trip per card.
+    const names = zones.map((z) => z.locationName);
+    if (JSON.stringify(names) !== JSON.stringify(profile.zoneNames ?? [])) {
+      await configStore.saveDeviceProfile(id, { ...profile, zoneNames: names });
+    }
   }
 
   async function apply(zoneIndex: number) {
@@ -134,6 +146,7 @@
       lightingZones: { ...byZone },
       lighting: byZone[String(activeZone)] ?? profile.lighting,
       zonePositions: { ...positions },
+      zoneNames: zones.map((z) => z.locationName),
     });
   }
 
@@ -186,14 +199,67 @@
     }
   }
 
+  /**
+   * G HUB's "Sync lighting options": pushes this zone's effect to every other
+   * lighting-capable device, all their zones, and saves it into their profiles.
+   */
+  async function syncOptions() {
+    if (syncingOptions) return;
+    syncingOptions = true;
+    const source = { ...current };
+    let touched = 0;
+    try {
+      for (const other of deviceStore.devices) {
+        if (other.id === device.id || !other.capabilities.lighting) continue;
+        let otherZones: ZoneInfo[];
+        try {
+          otherZones = await api.getLightingZones(other.id);
+        } catch {
+          otherZones = [{ index: 0, location: 1, locationName: "Primary", effects: [0, 1, 3, 10] }];
+        }
+        const settings: Record<string, LightingSettings> = {};
+        for (const z of otherZones) {
+          settings[String(z.index)] = { ...source };
+          await api.setDeviceLighting({
+            deviceId: other.id,
+            zone: z.index,
+            color: source.color,
+            effect: source.effect,
+            brightness: source.brightness,
+            rateMs: source.rateMs,
+            persist: true,
+          });
+        }
+        const profile = configStore.deviceProfile(other.id);
+        await configStore.saveDeviceProfile(other.id, {
+          ...profile,
+          lighting: { ...source },
+          lightingZones: settings,
+        });
+        touched += 1;
+      }
+      // This device's other zones follow too, as in G HUB.
+      await syncZones(false);
+      ui.toast(
+        touched === 0 ? "No other lighting devices connected." : `Lighting synced to ${touched} other device${touched === 1 ? "" : "s"}.`,
+        touched === 0 ? "info" : "success",
+        3000,
+      );
+    } catch (e) {
+      ui.toast(`Could not sync lighting: ${api.errorMessage(e)}`, "error", 6000);
+    } finally {
+      syncingOptions = false;
+    }
+  }
+
   /** Copies the active zone onto every other zone and applies them all. */
-  async function syncZones() {
+  async function syncZones(notify = true) {
     const source = current;
     const next: Record<string, LightingSettings> = {};
     for (const zone of zones) next[String(zone.index)] = { ...source };
     byZone = next;
     for (const zone of zones) await apply(zone.index);
-    ui.toast("All lighting zones synced.", "success", 2500);
+    if (notify) ui.toast("All lighting zones synced.", "success", 2500);
   }
 </script>
 
@@ -232,7 +298,6 @@
               <option value={name}>{EFFECT_LABEL[name]}</option>
             {/each}
           </select>
-          <Icon name="chevronDown" size={14} />
         </div>
       </div>
 
@@ -251,37 +316,37 @@
         </div>
       {/if}
 
-      {#if current.effect !== "off"}
-        <Slider
-          value={current.brightness}
-          min={0}
-          max={100}
-          label="Brightness"
-          suffix="%"
-          oninput={(v) => update({ brightness: v })}
-          onchange={() => apply(activeZone)}
-        />
-      {/if}
-
       {#if current.effect === "breathing" || current.effect === "cycle"}
         <Slider
           value={current.rateMs}
           min={500}
           max={20000}
           step={500}
-          label="Cycle duration"
-          suffix=" ms"
+          label="Effect rate"
+          suffix="ms"
           oninput={(v) => update({ rateMs: v })}
           onchange={() => apply(activeZone)}
         />
       {/if}
 
-      {#if zones.length > 1}
-        <button class="wide" onclick={syncZones}>Sync lighting zones</button>
+      {#if current.effect !== "off"}
+        <Slider
+          value={current.brightness}
+          min={0}
+          max={100}
+          label="Effect brightness"
+          suffix="%"
+          oninput={(v) => update({ brightness: v })}
+          onchange={() => apply(activeZone)}
+        />
       {/if}
 
-      <div class="placement">
-        <button class="wide" class:on={editZones} onclick={() => (editZones = !editZones)}>
+      {#if zones.length > 1}
+        <button class="wide" onclick={() => syncZones()}>Sync lighting zones</button>
+      {/if}
+
+      <div class="placement" class:hidden={hasLayout && !editZones}>
+        <button class="link" class:on={editZones} onclick={() => (editZones = !editZones)}>
           {editZones ? "Done positioning" : "Position zones on artwork"}
         </button>
         {#if editZones}
@@ -299,10 +364,19 @@
         {/if}
       </div>
 
-      <p class="hint foot">
-        {#if applying}Applying…{:else}Zone {activeZone + 1} of {zones.length}.{/if}
-        Settings are stored in <strong>{configStore.active?.name}</strong>.
-      </p>
+    {/if}
+  {/snippet}
+
+  {#snippet stageAside()}
+    {#if device.battery}
+      <div class="battery">
+        <span class="battery-label">Battery level</span>
+        <span class="battery-value">
+          {device.battery.percentage}%
+          <Icon name={batteryIcon(device.battery)} size={16} />
+        </span>
+        <span class="battery-label">{batteryLabel(device.battery)}</span>
+      </div>
     {/if}
   {/snippet}
 
@@ -320,7 +394,9 @@
   {/snippet}
 
   {#snippet stageFooter()}
-    <button class="stage-button" onclick={() => apply(activeZone)}>Re-apply to device</button>
+    <button class="stage-button" onclick={syncOptions} disabled={syncingOptions}>
+      {syncingOptions ? "Syncing…" : "Sync lighting options"}
+    </button>
   {/snippet}
 </DeviceWorkspace>
 
@@ -359,14 +435,16 @@
   }
 
   .label {
-    font-size: 11px;
-    letter-spacing: 0.14em;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 1px;
     text-transform: uppercase;
-    color: var(--text-dim);
+    color: var(--text-label);
   }
 
   .select {
     position: relative;
+    align-self: flex-start;
     display: flex;
     align-items: center;
     color: var(--text-dim);
@@ -374,15 +452,15 @@
 
   .select select {
     appearance: none;
-    width: 100%;
-    padding: 7px 26px 7px 0;
+    width: auto;
+    padding: 4px 22px 4px 0;
     border: none;
     border-bottom: 1px solid transparent;
     background: transparent;
     font-family: var(--font);
-    font-size: 15px;
-    font-weight: 600;
-    letter-spacing: 0.06em;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
     text-transform: uppercase;
     color: var(--text);
     cursor: pointer;
@@ -397,9 +475,15 @@
     border-bottom-color: var(--cyan);
   }
 
-  .select :global(svg) {
+  .select::after {
+    content: "";
     position: absolute;
-    right: 4px;
+    right: 8px;
+    width: 7px;
+    height: 7px;
+    border-right: 1.5px solid var(--text);
+    border-bottom: 1.5px solid var(--text);
+    transform: translateY(-2px) rotate(45deg);
     pointer-events: none;
   }
 
@@ -409,14 +493,33 @@
 
   .wide {
     width: 100%;
-    padding: 11px;
-    border: 1px solid var(--line-strong);
-    border-radius: var(--radius-sm);
-    background: var(--surface-2);
-    font-size: 12px;
-    letter-spacing: 0.12em;
+    padding: 9px;
+    border-radius: 4px;
+    background: var(--surface-3);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
     text-transform: uppercase;
     color: var(--text);
+  }
+
+  .link {
+    align-self: flex-start;
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    text-decoration: underline;
+    color: var(--text-dim);
+  }
+
+  .link:hover,
+  .link.on {
+    color: var(--cyan);
+  }
+
+  .hidden {
+    display: none;
   }
 
   .wide:hover:not(:disabled) {
@@ -426,11 +529,6 @@
   .wide:disabled {
     opacity: 0.55;
     cursor: default;
-  }
-
-  .wide.on {
-    border-color: var(--cyan);
-    color: var(--cyan);
   }
 
   .wide.small {
@@ -459,27 +557,47 @@
     line-height: 1.5;
   }
 
-  .hint strong {
-    color: var(--text-dim);
-    font-weight: 600;
+  .battery {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+    text-align: right;
   }
 
-  .foot {
-    margin-top: auto;
+  .battery-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-label);
+  }
+
+  .battery-value {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 15px;
+    font-weight: 700;
   }
 
   .stage-button {
-    padding: 11px 30px;
-    border-radius: var(--radius-sm);
-    background: var(--surface-2);
-    font-size: 12px;
-    letter-spacing: 0.12em;
+    min-width: 250px;
+    padding: 10px 30px;
+    border-radius: 4px;
+    background: var(--surface-3);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: var(--text-dim);
+    color: var(--text);
   }
 
-  .stage-button:hover {
-    background: var(--surface-3);
-    color: var(--text);
+  .stage-button:hover:not(:disabled) {
+    background: #454545;
+  }
+
+  .stage-button:disabled {
+    opacity: 0.6;
   }
 </style>

@@ -15,19 +15,19 @@
 
 <header class="titlebar" data-tauri-drag-region>
   <div class="brand" data-tauri-drag-region>
-    <span class="mark">G</span>
-    <span class="name">OpenGHub</span>
+    <!-- <span class="mark">G</span> -->
+    <!-- <span class="name">OpenGHub</span> -->
   </div>
 
   <div class="controls">
     <button class="ctrl" onclick={() => api.windowMinimize()} aria-label="Minimise">
-      <Icon name="minimize" size={14} strokeWidth={1.4} />
+      <Icon name="minimize" size={14} strokeWidth={5} />
     </button>
     <button class="ctrl" onclick={toggleMaximize} aria-label={maximized ? "Restore" : "Maximise"}>
-      <Icon name={maximized ? "restore" : "maximize"} size={12} strokeWidth={1.4} />
+      <Icon name={maximized ? "restore" : "maximize"} size={12} strokeWidth={5} />
     </button>
     <button class="ctrl close" onclick={() => api.windowClose()} aria-label="Close">
-      <Icon name="close" size={14} strokeWidth={1.4} />
+      <Icon name="close" size={14} strokeWidth={5} />
     </button>
   </div>
 </header>

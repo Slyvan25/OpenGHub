@@ -1,0 +1,17 @@
+<svg width="326" height="183" viewBox="0 0 326 183" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <g clip-path="url(#paint0_angular_662_55076_clip_path)">
+        <g transform="matrix(0.051 0.12 -0.320171 0.136072 374.75 -28)">
+            <foreignObject x="-1352.39" y="-1352.39" width="2704.78" height="2704.78">
+                <div xmlns="http://www.w3.org/1999/xhtml" style="background:conic-gradient(from 90deg,rgba(0, 85, 255, 1) 0deg,rgba(13, 41, 63, 1) 160.962deg,rgba(18, 92, 151, 1) 360deg);height:100%;width:100%;opacity:1"/>
+            </foreignObject>
+        </g>
+    </g>
+    <g transform="translate(113.25, 41.5)">
+        <path d="M96.75 50C96.75 75.9574 75.7074 97 49.75 97M96.75 50C96.75 24.0426 75.7074 3 49.75 3M96.75 50H2.75M49.75 97C23.7926 97 2.75 75.9574 2.75 50M49.75 97C61.506 84.1297 68.1869 67.4274 68.55 50C68.1869 32.5726 61.506 15.8703 49.75 3M49.75 97C37.994 84.1297 31.3131 67.4274 30.95 50C31.3131 32.5726 37.994 15.8703 49.75 3M2.75 50C2.75 24.0426 23.7926 3 49.75 3" stroke="#1196FF" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+    <defs>
+        <clipPath id="paint0_angular_662_55076_clip_path">
+            <rect x="0.75" width="325" height="183" rx="14"/>
+        </clipPath>
+    </defs>
+</svg>

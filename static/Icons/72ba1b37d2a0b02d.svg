@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="30px" height="30px" viewBox="0 0 30 30" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    <!-- Generator: sketchtool 50.2 (55047) - http://www.bohemiancoding.com/sketch -->
+    <title>3C3A1B03-1F83-4BDC-96FD-7FA58FBDD072</title>
+    <desc>Created with sketchtool.</desc>
+    <defs></defs>
+    <g id="Symbols" stroke="none" stroke-width="1" fill="none" fill-rule="evenodd">
+        <g id="Icon/wheel">
+            <path d="M15,26 C21.0751322,26 26,21.0751322 26,15 C26,8.92486775 21.0751322,4 15,4 C8.92486775,4 4,8.92486775 4,15 C4,21.0751322 8.92486775,26 15,26 Z" id="Path" stroke="#FFFFFF" stroke-width="2"></path>
+            <g id="Group" transform="translate(4.000000, 14.000000)" fill="#FFFFFF">
+                <polygon id="Path" points="22 0 0 0 0 2 22 2"></polygon>
+                <polygon id="Path" points="12 12 12 0 10 0 10 12"></polygon>
+            </g>
+            <circle id="Path" fill="#FFFFFF" cx="15" cy="15" r="3"></circle>
+        </g>
+    </g>
+</svg>

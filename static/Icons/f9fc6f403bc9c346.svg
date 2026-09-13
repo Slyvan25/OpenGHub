@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 30 30">
+    <g fill="none" fill-rule="evenodd">
+        <g stroke="#FFF" stroke-width="2">
+            <path stroke-linecap="round" d="M4 14v4.067c0 .672.367 1.296.968 1.643l8.483 5.862a3.11 3.11 0 0 0 3.098 0l8.483-5.862c.6-.347.968-.97.968-1.643V14"/>
+            <path d="M13.575 8l-.548.28-7.958 4.076c-.968.495-1.321 1.628-.79 2.53.147.247.351.46.6.623l8.967 5.905a2.121 2.121 0 0 0 2.308 0l8.968-5.905c.902-.593 1.117-1.756.479-2.596a1.96 1.96 0 0 0-.67-.557l-7.615-3.9-.804-.411"/>
+        </g>
+        <g transform="translate(12 3)">
+            <ellipse cx="3" cy="1.5" fill="#FFF" rx="3" ry="1.5"/>
+            <ellipse cx="3" cy="12" fill="#FFF" rx="2.5" ry="1"/>
+            <path stroke="#FFF" stroke-width="2" d="M1.506 11.926L1 1.5M4.506 11.926L5 1.5"/>
+        </g>
+    </g>
+</svg>

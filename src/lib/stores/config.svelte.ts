@@ -5,10 +5,12 @@ import type { Config, DeviceProfile, Profile, Settings } from "$lib/types";
 const EMPTY_DEVICE_PROFILE: DeviceProfile = {
   dpiStages: [],
   activeStage: 0,
+  shiftStage: null,
   reportRateHz: null,
   lighting: null,
   lightingZones: {},
   zonePositions: {},
+  zoneNames: [],
   assignments: [],
   macros: [],
 };
@@ -23,7 +25,12 @@ class ConfigStore {
     illuminationFollowsProfile: false,
     autoSwitchProfiles: true,
     autoFetchArtwork: true,
+    persistentProfile: "default",
+    communityRepo: "",
+    authorName: "",
   });
+  /** Executables added to the Games library by hand. */
+  manualGames = $state<import("$lib/types").ManualGame[]>([]);
   loading = $state(true);
 
   readonly active = $derived(
@@ -43,6 +50,7 @@ class ConfigStore {
     this.profiles = config.profiles;
     this.activeProfileId = config.activeProfile;
     this.settings = config.settings;
+    this.manualGames = config.manualGames ?? [];
   }
 
   deviceProfile(deviceId: string): DeviceProfile {
@@ -74,6 +82,10 @@ class ConfigStore {
 
   async bindApplication(profileId: string, applicationId: string | null) {
     this.apply(await api.bindProfileApplication(profileId, applicationId));
+  }
+
+  async setDisabled(profileId: string, disabled: boolean) {
+    this.apply(await api.setProfileDisabled(profileId, disabled));
   }
 }
 

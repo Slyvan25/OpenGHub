@@ -28,5 +28,15 @@ export default defineConfig(() => ({
       // 3. tell Vite to ignore watching `src-tauri`
       ignored: ["**/src-tauri/**"],
     },
+    // 4. Pre-transform every component in the client environment at startup.
+    //    SvelteKit emits <link> tags for each component's virtual CSS module,
+    //    and the browser fetches those before the component's own JS. Vite 8
+    //    keeps client and SSR module graphs apart, so if the client graph has
+    //    not transformed the component yet, vite-plugin-svelte finds no CSS
+    //    and serves the raw .svelte source as the stylesheet — the component
+    //    then renders unstyled. Warming the client graph removes the race.
+    warmup: {
+      clientFiles: ["./src/routes/**/*.svelte", "./src/lib/**/*.svelte"],
+    },
   },
 }));

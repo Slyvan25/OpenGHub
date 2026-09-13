@@ -65,17 +65,18 @@
 <style>
   .picker {
     position: relative;
+    font-weight: bold;
   }
 
   .pill {
     display: flex;
     align-items: center;
     gap: 10px;
-    min-width: 240px;
-    height: 34px;
-    padding: 0 10px 0 8px;
+    min-width: 256px;
+    height: 40px;
+    padding: 0 12px 0 10px;
     border: 1px solid var(--line);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius);
     background: var(--surface);
     transition: background 120ms var(--ease), border-color 120ms var(--ease);
   }
@@ -147,6 +148,7 @@
     font-size: 13px;
     color: var(--text);
     text-align: left;
+    font-weight: bold;
   }
 
   .item:hover {

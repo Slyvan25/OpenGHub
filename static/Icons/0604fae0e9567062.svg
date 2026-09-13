@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="40px" height="32px" viewBox="0 0 20 16" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    <!-- Generator: Sketch 51.1 (57501) - http://www.bohemiancoding.com/sketch -->
+    <title>Group 11</title>
+    <desc>Created with Sketch.</desc>
+    <defs></defs>
+    <g id="Macro" stroke="none" stroke-width="1" fill="none" fill-rule="evenodd">
+        <g id="Assignment+action+Launch-App" transform="translate(-214.000000, -2093.000000)">
+            <g id="Configuration-Copy-4" transform="translate(134.000000, 1680.000000)">
+                <g id="OBS-actions" transform="translate(12.000000, 277.000000)">
+                    <g id="Group-11" transform="translate(68.000000, 136.000000)">
+                        <path d="M10.8479983,1.35679729 L19.0437507,14.4700011 C19.336461,14.9383376 19.1940878,15.555288 18.7257513,15.8479983 C18.5668197,15.9473306 18.3831721,16 18.1957524,16 L1.80424764,16 C1.25196289,16 0.804247642,15.5522847 0.804247642,15 C0.804247642,14.8125803 0.856917086,14.6289327 0.956249338,14.4700011 L9.1520017,1.35679729 C9.44471203,0.888460755 10.0616624,0.74608759 10.5299989,1.03879792 C10.6587681,1.11927863 10.7675176,1.22802815 10.8479983,1.35679729 Z" id="Triangle-3" fill="#FFB401"></path>
+                        <rect id="Rectangle-12" fill="#181818" x="9" y="5" width="2" height="6"></rect>
+                        <circle id="Oval-5" fill="#181818" cx="10" cy="13" r="1"></circle>
+                    </g>
+                </g>
+            </g>
+        </g>
+    </g>
+</svg>

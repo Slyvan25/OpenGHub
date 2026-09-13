@@ -1,6 +1,6 @@
 /** Shared presentation helpers for devices — icons, labels, default tabs. */
 import type { IconName } from "$lib/components/Icon.svelte";
-import type { BatteryState, Connection, Device, DeviceKind } from "$lib/types";
+import type { BatteryState, Connection, Device, DeviceKind, DeviceProfile } from "$lib/types";
 
 export function kindIcon(kind: DeviceKind): IconName {
   switch (kind) {
@@ -77,21 +77,46 @@ export function artworkIds(device: Pick<Device, "productId" | "modelIds">): numb
   );
 }
 
+/**
+ * Per-zone glows for a device from its saved profile — what the dashboard
+ * needs to show the same lighting the LIGHTSYNC page previews. Falls back to
+ * the single legacy colour when no per-zone settings exist yet.
+ */
+export function zoneGlowsFor(
+  profile: Pick<DeviceProfile, "lightingZones" | "zoneNames" | "lighting">,
+): { index: number; locationName: string; color: string | null; brightness: number }[] {
+  const names = profile.zoneNames ?? [];
+  const zones = profile.lightingZones ?? {};
+  if (names.length === 0) return [];
+  return names.map((locationName, index) => {
+    const s = zones[String(index)] ?? profile.lighting ?? null;
+    return {
+      index,
+      locationName,
+      color: s && s.effect !== "off" ? s.color : null,
+      brightness: s?.brightness ?? 0,
+    };
+  });
+}
+
 export type TabId = "sensitivity" | "assignments" | "lighting" | "settings";
 
-/** The tabs a device can actually drive, in G HUB's order. */
+/**
+ * The tabs a device can actually drive, in G HUB's rail order for a mouse:
+ * Sensitivity, Assignments, LIGHTSYNC, with the gear apart at the bottom.
+ */
 export function tabsFor(device: Device): { id: TabId; label: string; icon: IconName }[] {
   const tabs: { id: TabId; label: string; icon: IconName }[] = [];
-  if (device.capabilities.lighting) {
-    tabs.push({ id: "lighting", label: "LIGHTSYNC", icon: "lightsync" });
+  if (device.capabilities.dpi) {
+    tabs.push({ id: "sensitivity", label: "Sensitivity", icon: "dpi" });
   }
   if (device.kind === "mouse" || device.kind === "keyboard") {
     tabs.push({ id: "assignments", label: "Assignments", icon: "assignments" });
   }
-  if (device.capabilities.dpi) {
-    tabs.push({ id: "sensitivity", label: "Sensitivity", icon: "dpi" });
+  if (device.capabilities.lighting) {
+    tabs.push({ id: "lighting", label: "LIGHTSYNC", icon: "lightsync" });
   }
-  tabs.push({ id: "settings", label: "Settings", icon: "sliders" });
+  tabs.push({ id: "settings", label: "Settings", icon: "gear" });
   return tabs;
 }
 

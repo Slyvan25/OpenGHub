@@ -6,13 +6,21 @@
   import { configStore } from "$lib/stores/config.svelte";
   import { deviceStore } from "$lib/stores/devices.svelte";
   import { ui } from "$lib/stores/ui.svelte";
-  import NavDrawer from "$lib/components/NavDrawer.svelte";
   import TitleBar from "$lib/components/TitleBar.svelte";
   import Toasts from "$lib/components/Toasts.svelte";
   import type { Config } from "$lib/types";
   import TopBar from "$lib/components/TopBar.svelte";
+  import { page } from "$app/state";
 
   let { children } = $props();
+
+  /**
+   * Device screens and community profile pages carry their own back arrow
+   * instead of the tab bar, as in G HUB.
+   */
+  const showTopBar = $derived(
+    !page.url.pathname.startsWith("/device/") && !/^\/community\/.+/.test(page.url.pathname),
+  );
 
   onMount(() => {
     ui.restore();
@@ -51,13 +59,14 @@
 
 <div class="shell">
   <TitleBar />
-  <TopBar />
+  {#if showTopBar}
+    <TopBar />
+  {/if}
   <main>
     {@render children?.()}
   </main>
 </div>
 
-<NavDrawer />
 <Toasts />
 
 <style>
@@ -73,5 +82,12 @@
     min-height: 0;
     overflow-y: auto;
     overflow-x: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  main > :global(*) {
+    flex: 1;
+    min-height: 0;
   }
 </style>

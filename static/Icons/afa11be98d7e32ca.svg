@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="20px" height="20px" viewBox="0 0 20 20" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    <title>Icon/Status/Paired</title>
+    <g id="8.-Additional-States" stroke="none" stroke-width="1" fill="none" fill-rule="evenodd">
+        <g id="03_Accidental_Success" transform="translate(-789.000000, -401.000000)" fill="#00A9E0">
+            <g id="Modal" transform="translate(260.000000, 116.000000)">
+                <g id="content" transform="translate(0.000000, 48.000000)">
+                    <g id="Device" transform="translate(68.000000, 102.000000)">
+                        <g id="Group" transform="translate(459.000000, 133.000000)">
+                            <g id="status-icons" transform="translate(2.000000, 2.000000)">
+                                <path d="M10,20 C15.5228475,20 20,15.5228475 20,10 C20,4.4771525 15.5228475,0 10,0 C4.4771525,0 0,4.4771525 0,10 C0,15.5228475 4.4771525,20 10,20 Z M8.10855263,11.9714286 L5.20285088,8.94285714 L3.75,10.4571429 L8.10855263,15 L16.25,6.51428571 L14.7971491,5 L8.10855263,11.9714286 Z" id="Connected-Icon"></path>
+                            </g>
+                        </g>
+                    </g>
+                </g>
+            </g>
+        </g>
+    </g>
+</svg>

@@ -24,6 +24,9 @@ import type {
   GhubCacheInfo,
   ImportedDevice,
   ImportReport,
+  CommunityIndex,
+  SharedProfile,
+  Game,
 } from "./types";
 
 export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -94,6 +97,21 @@ export const refreshApplicationDatabase = () =>
 export const getActiveApplication = () => call<string | null>("get_active_application");
 export const bindProfileApplication = (profileId: string, applicationId: string | null) =>
   call<Config>("bind_profile_application", { profileId, applicationId });
+export const setProfileDisabled = (profileId: string, disabled: boolean) =>
+  call<Config>("set_profile_disabled", { profileId, disabled });
+
+// -- community profiles ----------------------------------------------------
+
+export const getCommunityIndex = (refresh = false) =>
+  call<CommunityIndex>("get_community_index", { refresh });
+export const previewCommunityProfile = (path: string) =>
+  call<SharedProfile>("preview_community_profile", { path });
+export const importCommunityProfile = (shared: SharedProfile) =>
+  call<Config>("import_community_profile", { shared });
+export const exportProfile = (profileId: string, deviceId: string, description: string) =>
+  call<string>("export_profile", { profileId, deviceId, description });
+export const writeTextFile = (path: string, contents: string) =>
+  call<void>("write_text_file", { path, contents });
 
 // -- onboard profiles ------------------------------------------------------
 
@@ -130,6 +148,14 @@ export const getDeviceProfile = (deviceId: string) =>
   call<DeviceProfile>("get_device_profile", { deviceId });
 export const saveSettings = (settings: Settings) => call<Config>("save_settings", { settings });
 export const getConfigPath = () => call<string>("get_config_path");
+
+// -- games library ---------------------------------------------------------
+
+export const getGames = (refresh = false) => call<Game[]>("get_games", { refresh });
+export const launchGame = (gameId: string) => call<void>("launch_game", { gameId });
+export const addManualGame = (name: string, exec: string, args: string, cover: string | null) =>
+  call<Config>("add_manual_game", { name, exec, args, cover });
+export const removeManualGame = (id: string) => call<Config>("remove_manual_game", { id });
 
 // -- artwork ---------------------------------------------------------------
 

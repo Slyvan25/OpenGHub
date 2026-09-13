@@ -129,21 +129,40 @@ export interface Assignment {
   value: string;
 }
 
+export type MacroKind = "noRepeat" | "repeatWhileHolding" | "toggle" | "sequence";
+
+export interface MacroSections {
+  onPress: import("$lib/macros").MacroStep[];
+  whileHolding: import("$lib/macros").MacroStep[];
+  onRelease: import("$lib/macros").MacroStep[];
+}
+
 export interface MacroDef {
   id: string;
   name: string;
+  /** What the device plays: the flattened sequence. */
   steps: import("$lib/macros").MacroStep[];
+  /** G HUB's macro type; presentation only, the device always gets `steps`. */
+  kind?: MacroKind | null;
+  sections?: MacroSections | null;
+  useStandardDelays?: boolean | null;
+  standardDelayMs?: number | null;
+  color?: string | null;
 }
 
 export interface DeviceProfile {
   dpiStages: number[];
   activeStage: number;
+  /** Stage a DPI-shift button jumps to while held; null when none is marked. */
+  shiftStage?: number | null;
   reportRateHz: number | null;
   lighting: LightingSettings | null;
   /** Per-zone settings, keyed by zone index. */
   lightingZones: Record<string, LightingSettings>;
   /** Dragged glow positions, keyed by zone index. */
   zonePositions: Record<string, { x: number; y: number; r: number }>;
+  /** HID++ location name per zone index, cached from the device. */
+  zoneNames: string[];
   assignments: Assignment[];
   /** Recorded macros, referenced by assignments with category `macro`. */
   macros: MacroDef[];
@@ -186,6 +205,8 @@ export interface Profile {
   /** Bound game from the application database; activates when it runs. */
   applicationId?: string | null;
   posterUrl?: string | null;
+  /** A disabled game never activates its profile. */
+  disabled?: boolean;
   devices: Record<string, DeviceProfile>;
 }
 
@@ -196,12 +217,92 @@ export interface Settings {
   illuminationFollowsProfile: boolean;
   autoSwitchProfiles: boolean;
   autoFetchArtwork: boolean;
+  /** Profile used when no bound game is running. */
+  persistentProfile: string;
+  /** Base URL of the community profile repository. */
+  communityRepo: string;
+  /** Name written into shared profiles. */
+  authorName: string;
+}
+
+// -- community profiles ----------------------------------------------------
+
+export interface TargetDevice {
+  modelId: string;
+  productIds: number[];
+  displayName: string;
+  kind: string;
+}
+
+export interface SharedProfile {
+  format: number;
+  id: string;
+  name: string;
+  author: string;
+  description: string;
+  license: string;
+  device: TargetDevice;
+  application: { id: string; name: string } | null;
+  profile: DeviceProfile;
+}
+
+export interface CommunityEntry {
+  id: string;
+  name: string;
+  author: string;
+  description: string;
+  device: TargetDevice;
+  application: { id: string; name: string } | null;
+  path: string;
+  macroCount: number;
+  assignmentCount: number;
+  dpiStages: number[];
+  hasLighting: boolean;
+  updated: string;
+}
+
+export interface CommunityIndex {
+  version: number;
+  generated: string;
+  profiles: CommunityEntry[];
 }
 
 export interface Config {
   profiles: Profile[];
   activeProfile: string;
   settings: Settings;
+  manualGames?: ManualGame[];
+}
+
+// -- games library ----------------------------------------------------------
+
+export type GameSource = "steam" | "epic" | "gog" | "lutris" | "manual";
+
+/** One installed game, gathered from a launcher on this machine. */
+export interface Game {
+  /** `<source>:<launcher key>`. */
+  id: string;
+  source: GameSource;
+  name: string;
+  /** Local cover file (served through the asset protocol). */
+  cover: string | null;
+  /** Remote cover to fall back on. */
+  coverUrl: string | null;
+  /** Unix seconds; 0 when never played. */
+  lastPlayed: number;
+  playtimeMinutes: number;
+  installDir: string | null;
+  /** Matching Logitech application, which is what links a game to a profile. */
+  applicationId: string | null;
+}
+
+/** An executable the user added to the library by hand. */
+export interface ManualGame {
+  id: string;
+  name: string;
+  exec: string;
+  args: string;
+  cover: string | null;
 }
 
 /** Zone rectangles and button markers imported from a G HUB depot, normalised 0–1. */

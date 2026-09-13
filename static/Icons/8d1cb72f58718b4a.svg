@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="20px" height="20px" viewBox="0 0 20 20" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    <title>Icon/Status/Paired Copy 2</title>
+    <g id="8.-Additional-States" stroke="none" stroke-width="1" fill="none" fill-rule="evenodd">
+        <g id="03_Accidental_Success" transform="translate(-346.000000, -494.000000)">
+            <g id="Modal" transform="translate(260.000000, 116.000000)">
+                <g id="Note" transform="translate(84.000000, 376.000000)">
+                    <g id="status-icons" transform="translate(2.000000, 2.000000)">
+                        <circle id="Connected-Icon" stroke="#00A9E0" stroke-width="2" cx="10" cy="10" r="9"></circle>
+                        <rect id="Rectangle-12" fill="#00A9E0" transform="translate(10.000000, 11.875000) rotate(-180.000000) translate(-10.000000, -11.875000) " x="8.75" y="8.75" width="2.5" height="6.25"></rect>
+                        <circle id="Oval-5" fill="#00A9E0" transform="translate(10.000000, 6.250000) rotate(-180.000000) translate(-10.000000, -6.250000) " cx="10" cy="6.25" r="1.25"></circle>
+                    </g>
+                </g>
+            </g>
+        </g>
+    </g>
+</svg>

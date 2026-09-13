@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="18px" height="20px" viewBox="0 0 18 20" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    <!-- Generator: Sketch 51.1 (57501) - http://www.bohemiancoding.com/sketch -->
+    <title>Group 5</title>
+    <desc>Created with Sketch.</desc>
+    <defs></defs>
+    <g id="Macro" stroke="none" stroke-width="1" fill="none" fill-rule="evenodd">
+        <g id="Create-new-macro_4_empty-editor-Copy-2" transform="translate(-201.000000, -156.000000)">
+            <g id="Sequence-icon-Copy" transform="translate(192.000000, 151.000000)">
+                <g id="Group-2">
+                    <g id="Group-5" transform="translate(18.000000, 16.000000) rotate(180.000000) translate(-18.000000, -16.000000) translate(10.000000, 6.000000)">
+                        <path d="M8,4 C3.58211765,4 0,7.58211765 0,12 C0,16.4178824 3.58211765,20 8,20 C12.4178824,20 16,16.4178824 16,12" id="Stroke-1" stroke="#FFFFFF" stroke-width="2"></path>
+                        <polygon id="Fill-3" fill="#FFFFFF" transform="translate(9.000000, 3.500000) rotate(-10.000000) translate(-9.000000, -3.500000) " points="7 6 11 3.5 7 1"></polygon>
+                    </g>
+                </g>
+            </g>
+        </g>
+    </g>
+</svg>

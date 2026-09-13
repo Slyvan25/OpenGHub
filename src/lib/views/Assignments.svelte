@@ -8,8 +8,9 @@
    * pretending the change reached the hardware.
    */
   import { untrack } from "svelte";
+  import { page } from "$app/state";
   import * as api from "$lib/api";
-  import MacroRecorder from "$lib/components/MacroRecorder.svelte";
+  import MacroEditor from "$lib/components/MacroEditor.svelte";
   import { encodedSize, type MacroDef } from "$lib/macros";
   import DeviceArt from "$lib/components/DeviceArt.svelte";
   import DeviceWorkspace from "$lib/components/DeviceWorkspace.svelte";
@@ -34,14 +35,14 @@
   }
 
   const mouseControls: Control[] = [
-    { id: "button-1", label: "Left click", fallback: "Left Click" },
-    { id: "button-2", label: "Right click", fallback: "Right Click" },
+    { id: "button-1", label: "Left click", fallback: "Primary Click" },
+    { id: "button-2", label: "Right click", fallback: "Secondary Click" },
     { id: "button-3", label: "Middle click", fallback: "Middle Click" },
     { id: "button-4", label: "Thumb back", fallback: "Back" },
     { id: "button-5", label: "Thumb forward", fallback: "Forward" },
     { id: "button-6", label: "DPI cycle", fallback: "DPI Cycle" },
-    { id: "wheel-left", label: "Wheel left", fallback: "Unassigned" },
-    { id: "wheel-right", label: "Wheel right", fallback: "Unassigned" },
+    { id: "wheel-left", label: "Wheel left", fallback: "Scroll Left" },
+    { id: "wheel-right", label: "Wheel right", fallback: "Scroll Right" },
   ];
 
   const keyboardControls: Control[] = Array.from({ length: 12 }, (_, i) => ({
@@ -56,6 +57,8 @@
     category: Assignment["category"];
     label: string;
     value: string;
+    /** G HUB groups the COMMANDS list under collapsible headers. */
+    group?: string;
   }
 
   const library: { name: string; icon: IconName; items: Command[] }[] = [
@@ -63,14 +66,18 @@
       name: "Commands",
       icon: "assignments",
       items: [
-        { category: "command", label: "Copy", value: "ctrl+c" },
-        { category: "command", label: "Paste", value: "ctrl+v" },
-        { category: "command", label: "Cut", value: "ctrl+x" },
-        { category: "command", label: "Undo", value: "ctrl+z" },
-        { category: "command", label: "Redo", value: "ctrl+shift+z" },
-        { category: "command", label: "Select all", value: "ctrl+a" },
-        { category: "command", label: "Save", value: "ctrl+s" },
-        { category: "command", label: "Find", value: "ctrl+f" },
+        { category: "command", label: "Go Back", value: "alt+Left", group: "Navigation" },
+        { category: "command", label: "Go Forward", value: "alt+Right", group: "Navigation" },
+        { category: "command", label: "Go to Next Folder", value: "super+]", group: "Navigation" },
+        { category: "command", label: "Go to Previous Folder", value: "super+[", group: "Navigation" },
+        { category: "command", label: "Copy", value: "ctrl+c", group: "Editing" },
+        { category: "command", label: "Paste", group: "Editing", value: "ctrl+v" },
+        { category: "command", label: "Cut", group: "Editing", value: "ctrl+x" },
+        { category: "command", label: "Undo", group: "Editing", value: "ctrl+z" },
+        { category: "command", label: "Redo", group: "Editing", value: "ctrl+shift+z" },
+        { category: "command", label: "Select all", group: "Editing", value: "ctrl+a" },
+        { category: "command", label: "Save", group: "Editing", value: "ctrl+s" },
+        { category: "command", label: "Find", group: "Editing", value: "ctrl+f" },
       ],
     },
     {
@@ -119,6 +126,12 @@
 
   let assignments = $state<Assignment[]>([]);
   let selected = $state<string>("");
+  /** G HUB's DEFAULT / G-SHIFT layers: shifted bindings use a suffixed control id. */
+  let layer = $state<"default" | "gshift">("default");
+  let collapsed = $state<Record<string, boolean>>({});
+  /** Macro open in the full-screen editor, and whether it was just created. */
+  let editingMacro = $state<MacroDef | null>(null);
+  let editingFresh = $state(false);
   let dragOver = $state<string | null>(null);
   let search = $state("");
 
@@ -126,6 +139,13 @@
 
   // Once per device: assigning writes the profile back, so tracking the config
   // store here would re-enter this effect on every binding change.
+  $effect(() => {
+    if (spots[selected] === undefined) {
+      const first = Object.keys(spots)[0];
+      if (first) selected = first;
+    }
+  });
+
   $effect(() => {
     const id = device.id;
     if (seededFor === id) return;
@@ -137,6 +157,19 @@
       macros = [...(profile.macros ?? [])];
       // The control set depends on the device kind, so pick a valid default.
       if (!controls.some((c) => c.id === selected)) selected = controls[0]?.id ?? "";
+
+      // `?macro=new` / `?macro=<id>` deep-links straight into the editor.
+      const want = page.url.searchParams.get("macro");
+      if (want === "new") {
+        group = "Macros";
+        createMacro();
+      } else if (want) {
+        const def = macros.find((m) => m.id === want);
+        if (def) {
+          group = "Macros";
+          openMacro(def);
+        }
+      }
     });
   });
 
@@ -151,15 +184,22 @@
       .filter((group) => group.items.length > 0),
   );
 
+  /** Control id as stored for the current layer. */
+  function keyFor(controlId: string): string {
+    return layer === "gshift" ? `${controlId}:gshift` : controlId;
+  }
+
   function assignmentFor(controlId: string): Assignment | undefined {
-    return assignments.find((a) => a.control === controlId);
+    const key = keyFor(controlId);
+    return assignments.find((a) => a.control === key);
   }
 
   async function assign(controlId: string, command: Command) {
-    const next = assignments.filter((a) => a.control !== controlId);
+    const key = keyFor(controlId);
+    const next = assignments.filter((a) => a.control !== key);
     if (command.value !== "") {
       next.push({
-        control: controlId,
+        control: key,
         category: command.category,
         label: command.label,
         value: command.value,
@@ -175,6 +215,17 @@
       "success",
       2200,
     );
+  }
+
+  /** "ctrl+shift+z" → "CTRL + SHIFT + Z", as G HUB prints keystrokes. */
+  function prettyKeys(value: string): string {
+    if (!value) return "—";
+    if (!value.includes("+") && value.length > 1 && !/^[a-z]/.test(value)) return value;
+    return value
+      .split("+")
+      .map((k) => (k.length === 1 ? k.toUpperCase() : k.replace(/^super$/i, "Left Windows").replace(/^\w/, (c) => c.toUpperCase())))
+      .join(" + ")
+      .replace(/\b(Ctrl|Alt|Shift)\b/g, (m) => m.toUpperCase());
   }
 
   function controlLabel(id: string): string {
@@ -244,7 +295,6 @@
   // -- macros ---------------------------------------------------------------
 
   let macros = $state<MacroDef[]>([]);
-  let editing = $state<string | null>(null);
   let writing = $state(false);
 
   /**
@@ -266,22 +316,10 @@
       }, 0),
   );
 
-  function newMacro() {
-    const def: MacroDef = { id: `m${Date.now()}`, name: `Macro ${macros.length + 1}`, steps: [] };
-    macros = [...macros, def];
-    editing = def.id;
-    persistMacros();
-  }
-
-  function updateMacro(next: MacroDef) {
-    macros = macros.map((m) => (m.id === next.id ? next : m));
-    persistMacros();
-  }
-
   function deleteMacro(id: string) {
     macros = macros.filter((m) => m.id !== id);
     assignments = assignments.filter((a) => !(a.category === "macro" && a.value === id));
-    if (editing === id) editing = null;
+    if (editingMacro?.id === id) editingMacro = null;
     persistMacros();
   }
 
@@ -338,38 +376,95 @@
    * table does not know. Otherwise the per-category guesses apply.
    */
   const layout = $derived(artwork.layoutFor(artworkIds(device)));
+  /** `front` or `side`; G HUB switches with ◀ ▶ when the depot has both. */
+  let view = $state<"front" | "side">("front");
+  const views = $derived<("front" | "side")[]>((layout?.views.map((v) => v.view) as ("front" | "side")[] | undefined) ?? ["front"]);
+  const layoutView = $derived(layout?.views.find((v) => v.view === view) ?? null);
+
+  /**
+   * Button positions. An imported G HUB layout is authoritative and replaces
+   * the generic table entirely — it is the exact marker/label geometry G HUB
+   * draws, and it knows which buttons are visible in which view. Without one,
+   * the per-category guesses apply.
+   */
   const spots = $derived.by<Record<string, ControlSpot>>(() => {
-    const generic = controlSpots(device.kind);
-    const front = layout?.views.find((v) => v.view === "front");
-    if (!front) return generic;
+    if (!layoutView) return controlSpots(device.kind);
     const exact: Record<string, ControlSpot> = {};
-    for (const c of front.controls) {
-      // Labels beyond the image edge are clamped into the margins we draw.
-      const lx = c.side === "left" ? 0.02 : c.side === "right" ? 0.98 : c.labelX;
-      const ly = c.side === "top" ? 0.02 : c.labelY;
+    for (const c of layoutView.controls) {
       exact[c.control] = {
         dot: { x: c.markerX, y: c.markerY },
-        label: { x: lx, y: ly },
+        // Labels sit in the margins beside the image; the side decides which.
+        label: { x: c.side === "left" ? -0.06 : c.side === "right" ? 1.06 : c.labelX, y: c.side === "top" ? -0.05 : c.labelY },
         side: c.side,
       };
     }
-    return { ...generic, ...exact };
+    return exact;
   });
-  /** Controls with a position, including layout-only ones not in the list. */
-  const placed = $derived.by(() => {
-    const known = controls.filter((c) => spots[c.id]);
-    const extra = Object.keys(spots)
-      .filter((id) => !controls.some((c) => c.id === id))
-      .map((id) => ({ id, label: id.replace("button-", "G"), fallback: "Unassigned" }));
-    return [...known, ...extra];
+
+  /** Controls to draw: only those with a position in the current view. */
+  const placed = $derived.by(() =>
+    Object.keys(spots).map((id) => {
+      const known = controls.find((c) => c.id === id);
+      return known ?? { id, label: id.replace("button-", "G"), fallback: "Unassigned" };
+    }),
+  );
+
+  // The render is `object-fit: contain`; markers are fractions of the image,
+  // so the overlay is sized to the image's letterboxed rectangle, not the box.
+  let boxW = $state(1);
+  let boxH = $state(1);
+  const imgAspect = $derived(layoutView ? layoutView.width / layoutView.height : 0.6);
+  const imgRect = $derived.by(() => {
+    // Leave room either side for labels: the image gets the middle 56%.
+    const availW = boxW * 0.56;
+    const availH = boxH * 0.92;
+    let w: number, h: number;
+    if (imgAspect > availW / Math.max(1, availH)) {
+      w = availW;
+      h = w / imgAspect;
+    } else {
+      h = availH;
+      w = h * imgAspect;
+    }
+    return { w, h, left: (boxW - w) / 2, top: (boxH - h) / 2 };
   });
   const activeGroup = $derived(filtered.find((g) => g.name === group) ?? filtered[0]);
+
+  /** The active tab's items under their headers, in first-seen order. */
+  const grouped = $derived.by(() => {
+    if (!activeGroup) return [];
+    const map = new Map<string, Command[]>();
+    for (const item of activeGroup.items) {
+      const g = item.group ?? activeGroup.name;
+      map.set(g, [...(map.get(g) ?? []), item]);
+    }
+    return [...map].map(([name, items]) => ({ name, items, colour: null as string | null }));
+  });
+
+  function openMacro(def: MacroDef, isNew = false) {
+    editingMacro = def;
+    editingFresh = isNew;
+  }
+
+  function createMacro() {
+    const def: MacroDef = { id: `m${Date.now()}`, name: "", steps: [], kind: "noRepeat" };
+    openMacro(def, true);
+  }
+
+  async function saveMacro(next: MacroDef) {
+    const exists = macros.some((m) => m.id === next.id);
+    macros = exists ? macros.map((m) => (m.id === next.id ? next : m)) : [...macros, next];
+    editingMacro = next;
+    editingFresh = false;
+    await persistMacros();
+    ui.toast(`Saved ${next.name}.`, "success", 2200);
+  }
 </script>
 
 <DeviceWorkspace title="Assignments">
   {#snippet panel()}
     <div class="group-tabs" role="tablist">
-      {#each [...library, { name: "Macros" }] as g (g.name)}
+      {#each [...library.slice(0, 3), { name: "Macros" }, ...library.slice(3)] as g (g.name)}
         <button
           class="group-tab"
           class:active={g.name === group}
@@ -393,35 +488,24 @@
       <div class="macros">
         {#each macros as def (def.id)}
           <div class="macro">
-            <button class="macro-row" onclick={() => assignMacro(def)}>
+            <button class="macro-row" onclick={() => assignMacro(def)} title="Assign to {controlLabel(selected)}">
+              <span class="macro-swatch" style={def.color ? `background:${def.color}` : ""}></span>
               <span class="macro-name">{def.name}</span>
               <span class="macro-meta">{def.steps.length} steps</span>
             </button>
-            <button
-              class="icon"
-              onclick={() => (editing = editing === def.id ? null : def.id)}
-              aria-label="Edit macro"
-            >
+            <button class="icon" onclick={() => openMacro(def)} aria-label="Edit macro">
               <Icon name="pencil" size={13} />
             </button>
             <button class="icon" onclick={() => deleteMacro(def.id)} aria-label="Delete macro">
               <Icon name="trash" size={13} />
             </button>
           </div>
-          {#if editing === def.id}
-            <MacroRecorder
-              macro={def}
-              budget={macroBudget}
-              onchange={updateMacro}
-              onclose={() => (editing = null)}
-            />
-          {/if}
         {:else}
           <p class="hint">No macros yet.</p>
         {/each}
 
-        <button class="new-macro" onclick={newMacro}>
-          <Icon name="plus" size={14} /> New macro
+        <button class="new-macro" onclick={createMacro}>
+          <Icon name="plus" size={14} strokeWidth={2} /> Create new macro
         </button>
 
         <p class="hint">
@@ -440,113 +524,153 @@
           Logitech's database.
         </p>
         {#each gameGroups as g (g.name)}
-          <div class="game-cat">
-            <span class="swatch" style="background: {g.colour ?? 'var(--text-dimmer)'}"></span>
-            {g.name}
-          </div>
-          {#each g.items as item (item.label)}
-            <button
-              class="command"
-              draggable="true"
-              ondragstart={(e) => onDragStart(e, item)}
-              onclick={() => assign(selected, item)}
-            >
-              <span class="command-key">{item.value || "—"}</span>
-              <span class="command-name">{item.label}</span>
-            </button>
-          {/each}
+          {@render commandGroup(g)}
         {:else}
           <p class="hint">No commands match “{search}”.</p>
         {/each}
       </div>
     {:else}
-    <div class="commands">
-      {#if activeGroup}
-        {#each activeGroup.items as item (item.label)}
-          <button
-            class="command"
-            class:clear-command={item.value === ""}
-            draggable="true"
-            ondragstart={(e) => onDragStart(e, item)}
-            onclick={() => assign(selected, item)}
-          >
-            <span class="command-key">{item.value || "—"}</span>
-            <span class="command-name">{item.label}</span>
-          </button>
+      <div class="commands">
+        {#each grouped as g (g.name)}
+          {@render commandGroup(g)}
+        {:else}
+          <p class="hint">No commands match “{search}”.</p>
         {/each}
-      {:else}
-        <p class="hint">No commands match “{search}”.</p>
-      {/if}
-    </div>
+      </div>
     {/if}
+  {/snippet}
 
-    <p class="hint foot">
-      Assigning to <strong>{controlLabel(selected)}</strong>. Macros are written into the
-      device's onboard memory (<code>0x8100</code>) and a backup is taken first. Other command
-      types are stored in <strong>{configStore.active?.name}</strong> only, and do not reach the
-      hardware yet.
-    </p>
+
+
+  {#snippet stageFooter()}
+    <div class="stage-controls">
+      {#if views.length > 1}
+        <div class="views">
+          {#each views as v, i (v)}
+            <button class="view-pill" class:active={view === v} onclick={() => (view = v)}>View {i + 1}</button>
+          {/each}
+        </div>
+      {/if}
+      <div class="layers">
+        <span class:on={layer === "default"}>Default</span>
+        <button
+          class="switch"
+          class:right={layer === "gshift"}
+          role="switch"
+          aria-checked={layer === "gshift"}
+          aria-label="G-Shift layer"
+          onclick={() => (layer = layer === "default" ? "gshift" : "default")}
+        ></button>
+        <span class:on={layer === "gshift"}>G-Shift</span>
+      </div>
+    </div>
   {/snippet}
 
   {#snippet stage()}
-    <div class="callouts">
-      <DeviceArt kind={device.kind} productIds={artworkIds(device)} class="render" />
+    <div class="callouts" bind:clientWidth={boxW} bind:clientHeight={boxH}>
+      <!-- The image box: everything positional is a fraction of this. -->
+      <div
+        class="image-box"
+        style="left: {imgRect.left}px; top: {imgRect.top}px; width: {imgRect.w}px; height: {imgRect.h}px"
+      >
+        <DeviceArt
+          kind={device.kind}
+          productIds={artworkIds(device)}
+          variant={view}
+          class="render tight"
+        />
 
-      <!-- Leader lines, drawn under the markers. -->
-      <svg class="lines" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+        <svg class="lines" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+          {#each placed as control (control.id)}
+            {@const spot = spots[control.id]}
+            <line
+              x1={spot.label.x * 100}
+              y1={spot.label.y * 100}
+              x2={spot.dot.x * 100}
+              y2={spot.dot.y * 100}
+              class:active={selected === control.id}
+            />
+          {/each}
+        </svg>
+
         {#each placed as control (control.id)}
           {@const spot = spots[control.id]}
-          <line
-            x1={spot.label.x * 100}
-            y1={spot.label.y * 100}
-            x2={spot.dot.x * 100}
-            y2={spot.dot.y * 100}
+          {@const bound = assignmentFor(control.id)}
+          <button
+            class="dot"
             class:active={selected === control.id}
-          />
+            class:dragover={dragOver === control.id}
+            style="left: {spot.dot.x * 100}%; top: {spot.dot.y * 100}%"
+            aria-label={control.label}
+            onclick={() => (selected = control.id)}
+            ondragover={(e) => {
+              e.preventDefault();
+              dragOver = control.id;
+            }}
+            ondragleave={() => (dragOver = null)}
+            ondrop={(e) => onDrop(e, control.id)}
+          ></button>
+
+          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+          <div
+            class="callout {spot.side}"
+            class:active={selected === control.id}
+            class:dragover={dragOver === control.id}
+            style="left: {spot.label.x * 100}%; top: {spot.label.y * 100}%"
+            onclick={() => (selected = control.id)}
+            ondragover={(e) => {
+              e.preventDefault();
+              dragOver = control.id;
+            }}
+            ondragleave={() => (dragOver = null)}
+            ondrop={(e) => onDrop(e, control.id)}
+          >
+            <span class="callout-binding" class:bound={!!bound} title={control.label}>
+              {bound?.label ?? control.fallback}
+            </span>
+          </div>
         {/each}
-      </svg>
+      </div>
 
-      {#each placed as control (control.id)}
-        {@const spot = spots[control.id]}
-        {@const bound = assignmentFor(control.id)}
-        <button
-          class="dot"
-          class:active={selected === control.id}
-          class:dragover={dragOver === control.id}
-          style="left: {spot.dot.x * 100}%; top: {spot.dot.y * 100}%"
-          aria-label={control.label}
-          onclick={() => (selected = control.id)}
-          ondragover={(e) => {
-            e.preventDefault();
-            dragOver = control.id;
-          }}
-          ondragleave={() => (dragOver = null)}
-          ondrop={(e) => onDrop(e, control.id)}
-        ></button>
-
-        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-        <div
-          class="callout {spot.side}"
-          class:active={selected === control.id}
-          class:dragover={dragOver === control.id}
-          style="left: {spot.label.x * 100}%; top: {spot.label.y * 100}%"
-          onclick={() => (selected = control.id)}
-          ondragover={(e) => {
-            e.preventDefault();
-            dragOver = control.id;
-          }}
-          ondragleave={() => (dragOver = null)}
-          ondrop={(e) => onDrop(e, control.id)}
-        >
-          <span class="callout-name">{control.label}</span>
-          <span class="callout-binding" class:bound={!!bound}>
-            {bound?.label ?? control.fallback}
-          </span>
-        </div>
-      {/each}
     </div>
   {/snippet}
 </DeviceWorkspace>
+
+{#snippet commandGroup(g: { name: string; items: Command[]; colour: string | null })}
+  <button class="group-head" onclick={() => (collapsed = { ...collapsed, [g.name]: !collapsed[g.name] })}>
+    {#if g.colour}<span class="swatch" style="background: {g.colour}"></span>{/if}
+    <span class="group-name">{g.name}</span>
+    <Icon name={collapsed[g.name] ? "chevronDown" : "chevronUp"} size={14} />
+  </button>
+  {#if !collapsed[g.name]}
+    {#each g.items as item (item.label)}
+      <button
+        class="command"
+        class:clear-command={item.value === ""}
+        draggable="true"
+        ondragstart={(e) => onDragStart(e, item)}
+        onclick={() => assign(selected, item)}
+      >
+        <span class="command-key">{prettyKeys(item.value)}</span>
+        <span class="command-name">{item.label}</span>
+      </button>
+    {/each}
+  {/if}
+{/snippet}
+
+{#if editingMacro}
+  {#key editingMacro.id}
+    <MacroEditor
+    macro={editingMacro}
+    fresh={editingFresh}
+    onsave={saveMacro}
+    onclose={() => {
+      editingMacro = null;
+      editingFresh = false;
+    }}
+    />
+  {/key}
+{/if}
 
 <style>
   .group-tabs {
@@ -605,14 +729,96 @@
     padding: 4px 6px 8px;
   }
 
-  .game-cat {
+  .group-head {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 10px 6px 4px;
+    padding: 12px 4px 6px;
     font-family: var(--font);
-    font-size: 12.5px;
-    font-weight: 600;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text);
+    text-align: left;
+  }
+
+  .group-name {
+    flex: 1;
+  }
+
+  .macro-swatch {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-dimmer);
+  }
+
+  .stage-controls {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 22px;
+  }
+
+  .views {
+    display: flex;
+    gap: 6px;
+  }
+
+  .view-pill {
+    height: 20px;
+    padding: 0 10px;
+    border-radius: 999px;
+    border: 1px solid var(--text);
+    font-family: var(--font);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text);
+  }
+
+  .view-pill.active {
+    background: var(--text);
+    color: #000;
+  }
+
+  .layers {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-dimmer);
+  }
+
+  .layers .on {
+    color: var(--text);
+  }
+
+  .switch {
+    position: relative;
+    width: 30px;
+    height: 16px;
+    border-radius: 999px;
+    background: #3a3b3f;
+  }
+
+  .switch::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #fff;
+    transition: left 120ms var(--ease);
+  }
+
+  .switch.right::after {
+    left: 16px;
   }
 
   .swatch {
@@ -739,9 +945,13 @@
     min-height: 0;
   }
 
-  .callouts :global(.render) {
-    /* Leave room around the edges for the labels. */
-    padding: 0 22%;
+  .image-box {
+    position: absolute;
+  }
+
+  .image-box :global(.render) {
+    position: absolute;
+    inset: 0;
   }
 
   .lines {
@@ -749,6 +959,7 @@
     inset: 0;
     width: 100%;
     height: 100%;
+    overflow: visible;
     pointer-events: none;
   }
 
@@ -792,21 +1003,24 @@
     display: flex;
     flex-direction: column;
     gap: 1px;
-    max-width: 22%;
-    padding: 4px 7px;
+    max-width: 180px;
+    padding: 3px 6px;
     border-radius: var(--radius-sm);
     border: 1px solid transparent;
     cursor: pointer;
   }
 
+  /* The anchor is where the leader line ends; the label grows away from the
+     image, so left-side labels end at the anchor and right-side ones begin. */
   .callout.left {
-    transform: translate(0, -50%);
-    text-align: left;
+    transform: translate(-100%, -50%);
+    text-align: right;
+    align-items: flex-end;
   }
 
   .callout.right {
-    transform: translate(-100%, -50%);
-    text-align: right;
+    transform: translate(0, -50%);
+    text-align: left;
   }
 
   .callout.top {
@@ -828,22 +1042,16 @@
     background: rgba(0, 181, 226, 0.12);
   }
 
-  .callout-name {
-    font-size: 12.5px;
-    font-weight: 600;
-    white-space: nowrap;
-  }
-
+  /* G HUB prints the bound command as the label: white by default, yellow when changed. */
   .callout-binding {
-    font-size: 11px;
-    color: var(--text-dimmer);
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text);
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
 
   .callout-binding.bound {
-    color: var(--cyan);
+    color: #f5b400;
   }
 
   .hint {
@@ -857,11 +1065,5 @@
     font-weight: 600;
   }
 
-  .hint code {
-    font-family: ui-monospace, "DejaVu Sans Mono", monospace;
-  }
 
-  .foot {
-    margin-top: auto;
-  }
 </style>

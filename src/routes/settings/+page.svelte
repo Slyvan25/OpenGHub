@@ -175,6 +175,35 @@ KERNEL=="hidraw*", ATTRS{idVendor}=="046d", TAG+="uaccess"`;
   </section>
 
   <section class="card panel">
+    <h2 class="section-title">Community</h2>
+    <p class="lede">
+      Shared profiles are read from a public Git repository — one JSON file per profile plus an
+      <code>index.json</code>. Point this at a fork or mirror if you run your own.
+    </p>
+    <label class="text-field">
+      <span>Repository (raw file base URL)</span>
+      <input
+        type="url"
+        value={configStore.settings.communityRepo}
+        placeholder="https://raw.githubusercontent.com/Slyvan25/openghub-community/main"
+        onchange={(e) => save({ communityRepo: e.currentTarget.value.trim() })}
+        spellcheck="false"
+      />
+    </label>
+    <label class="text-field">
+      <span>Your name on shared profiles</span>
+      <input
+        type="text"
+        value={configStore.settings.authorName}
+        placeholder="anonymous"
+        maxlength="40"
+        onchange={(e) => save({ authorName: e.currentTarget.value.trim() })}
+        spellcheck="false"
+      />
+    </label>
+  </section>
+
+  <section class="card panel">
     <h2 class="section-title">G HUB data</h2>
     <p class="lede">
       G HUB stores each device's render, thumbnail and the exact positions of its lighting
@@ -328,6 +357,30 @@ KERNEL=="hidraw*", ATTRS{idVendor}=="046d", TAG+="uaccess"`;
   .ghost:hover {
     border-color: var(--line-strong);
     color: var(--text);
+  }
+
+  .text-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 12.5px;
+    color: var(--text-dim);
+  }
+
+  .text-field input {
+    height: 38px;
+    padding: 0 12px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--bg);
+    font-size: 13px;
+    color: var(--text);
+    user-select: text;
+  }
+
+  .text-field input:focus {
+    outline: none;
+    border-color: var(--accent);
   }
 
   .facts {

@@ -106,7 +106,41 @@ function loadConfig(): Config {
     }
   }
   return {
-    profiles: [{ id: "default", name: "Desktop: Default", kind: "desktop", devices: {} }],
+    profiles: [
+      {
+        id: "default",
+        name: "Desktop: Default",
+        kind: "desktop",
+        devices: {
+          // A recorded macro so the editor has something to show outside Tauri.
+          "demo-g502": {
+            dpiStages: [],
+            activeStage: 0,
+            reportRateHz: null,
+            lighting: null,
+            lightingZones: {},
+            zonePositions: {},
+            zoneNames: [],
+            assignments: [],
+            macros: [
+              {
+                id: "m-test",
+                name: "test",
+                kind: "noRepeat",
+                useStandardDelays: true,
+                standardDelayMs: 50,
+                steps: [
+                  { step: "keyDown", usage: 0x09 }, { step: "keyUp", usage: 0x09 },
+                  { step: "keyDown", usage: 0x08 }, { step: "keyUp", usage: 0x08 },
+                  { step: "keyDown", usage: 0x04 }, { step: "keyUp", usage: 0x04 },
+                  { step: "keyDown", usage: 0x16 }, { step: "keyUp", usage: 0x16 },
+                ],
+              },
+            ],
+          },
+        },
+      },
+    ],
     activeProfile: "default",
     settings: {
       startMinimised: false,
@@ -115,6 +149,9 @@ function loadConfig(): Config {
       illuminationFollowsProfile: false,
       autoSwitchProfiles: true,
       autoFetchArtwork: true,
+      persistentProfile: "default",
+      communityRepo: "https://raw.githubusercontent.com/Slyvan25/openghub-community/main",
+      authorName: "",
     },
   };
 }
@@ -256,6 +293,7 @@ export async function mockInvoke<T>(command: string, args: Record<string, unknow
         lighting: null,
         lightingZones: {},
         zonePositions: {},
+        zoneNames: [],
         assignments: [],
         macros: [],
       }) as T;
@@ -279,6 +317,24 @@ export async function mockInvoke<T>(command: string, args: Record<string, unknow
 
     case "backup_onboard_memory":
       return "~/.local/share/openghub/backups/mock.json" as T;
+
+    case "get_games":
+      return [
+        { id: "steam:730", source: "steam", name: "Counter-Strike 2", cover: null, coverUrl: null, lastPlayed: 1789303750, playtimeMinutes: 10567, installDir: "/games/cs2", applicationId: "cs2" },
+        { id: "steam:252950", source: "steam", name: "Rocket League", cover: null, coverUrl: null, lastPlayed: 1789303837, playtimeMinutes: 9365, installDir: null, applicationId: null },
+        { id: "steam:945360", source: "steam", name: "Among Us", cover: null, coverUrl: null, lastPlayed: 1773784509, playtimeMinutes: 1563, installDir: null, applicationId: null },
+        { id: "lutris:ubisoft-connect", source: "lutris", name: "Ubisoft Connect", cover: null, coverUrl: null, lastPlayed: 1720214050, playtimeMinutes: 598, installDir: null, applicationId: null },
+        { id: "epic:Fortnite", source: "epic", name: "Fortnite", cover: null, coverUrl: null, lastPlayed: 0, playtimeMinutes: 0, installDir: null, applicationId: null },
+        { id: "gog:1207658924", source: "gog", name: "The Witcher 3", cover: null, coverUrl: null, lastPlayed: 0, playtimeMinutes: 0, installDir: null, applicationId: null },
+        { id: "manual:tempest-rising-1", source: "manual", name: "Tempest Rising", cover: null, coverUrl: null, lastPlayed: 0, playtimeMinutes: 0, installDir: "/games/tempest", applicationId: null },
+      ] as T;
+
+    case "launch_game":
+      return undefined as T;
+
+    case "add_manual_game":
+    case "remove_manual_game":
+      throw "managing games needs the desktop app";
 
     case "get_applications":
       return [
@@ -312,6 +368,54 @@ export async function mockInvoke<T>(command: string, args: Record<string, unknow
 
     case "get_active_application":
       return null as T;
+
+    case "get_community_index":
+      return {
+        version: 1,
+        generated: "2026-09-13",
+        profiles: [
+          { id: "cs2-competitive-g502-wireless", name: "Counter-Strike 2: Competitive", author: "silvan",
+            description: "400/800/1600, logo off, DPI shift on G9.", device: { modelId: "g502_wireless", productIds: [0x407f, 0xc08d], displayName: "G502 LIGHTSPEED", kind: "mouse" },
+            application: { id: "cs2", name: "Counter-Strike 2" }, path: "profiles/g502_wireless/cs2-competitive.json",
+            macroCount: 1, assignmentCount: 3, dpiStages: [400, 800, 1600], hasLighting: true, updated: "2026-09-13" },
+          { id: "desktop-calm-g502-wireless", name: "Desktop: Calm", author: "ada",
+            description: "Slow cyan breathing, 800 DPI.", device: { modelId: "g502_wireless", productIds: [0x407f], displayName: "G502 LIGHTSPEED", kind: "mouse" },
+            application: null, path: "profiles/g502_wireless/desktop-calm.json",
+            macroCount: 0, assignmentCount: 0, dpiStages: [800], hasLighting: true, updated: "2026-09-12" },
+        ],
+      } as T;
+
+    case "preview_community_profile":
+      return {
+        format: 1, id: "cs2-competitive-g502-wireless", name: "Counter-Strike 2: Competitive", author: "silvan",
+        description: "400/800/1600, logo off, DPI shift on G9.", license: "CC0-1.0",
+        device: { modelId: "g502_wireless", productIds: [0x407f, 0xc08d], displayName: "G502 LIGHTSPEED", kind: "mouse" },
+        application: { id: "cs2", name: "Counter-Strike 2" },
+        profile: { dpiStages: [400, 800, 1600], activeStage: 1, reportRateHz: 1000, lighting: null,
+          lightingZones: { "0": { effect: "fixed", color: "#00a9e0", brightness: 100, rateMs: 5000 }, "1": { effect: "off", color: "#000000", brightness: 0, rateMs: 5000 } },
+          zonePositions: {}, zoneNames: ["Primary", "Logo"],
+          assignments: [{ control: "button-9", category: "macro", label: "Buy AK", value: "m1" }],
+          macros: [{ id: "m1", name: "Buy AK", steps: [{ step: "keyDown", usage: 0x05 }, { step: "keyUp", usage: 0x05 }, { step: "delay", ms: 40 }, { step: "keyDown", usage: 0x1f }, { step: "keyUp", usage: 0x1f }] }] },
+      } as T;
+
+    case "import_community_profile": {
+      const s = args.shared as { name: string; application: { id: string } | null; profile: unknown };
+      config.profiles.push({ id: `c${Date.now()}`, name: s.name, kind: s.application ? "game" : "app",
+        applicationId: s.application?.id ?? null, devices: { "demo-g502": s.profile as never } } as never);
+      return persist() as T;
+    }
+
+    case "export_profile":
+      return JSON.stringify({ format: 1, id: "mock", name: "Mock" }, null, 2) as T;
+
+    case "write_text_file":
+      return undefined as T;
+
+    case "set_profile_disabled": {
+      const p = config.profiles.find((x) => x.id === args.profileId);
+      if (p) p.disabled = args.disabled as boolean;
+      return persist() as T;
+    }
 
     case "bind_profile_application": {
       const p = config.profiles.find((x) => x.id === args.profileId);

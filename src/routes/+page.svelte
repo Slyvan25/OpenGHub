@@ -5,13 +5,38 @@
   import DeviceNotice from "$lib/components/DeviceNotice.svelte";
   import DeviceArt from "$lib/components/DeviceArt.svelte";
   import Icon from "$lib/components/Icon.svelte";
-  import { artworkIds, batteryLabel, connectionLabel, defaultTab, kindIcon } from "$lib/device-ui";
+  import { artworkIds, batteryIcon, connectionIcon, defaultTab, zoneGlowsFor } from "$lib/device-ui";
   import { configStore } from "$lib/stores/config.svelte";
   import { deviceStore } from "$lib/stores/devices.svelte";
   import { ui } from "$lib/stores/ui.svelte";
   import { goto } from "$app/navigation";
 
   let refreshing = $state(false);
+
+  // The cards need each zone's HID++ location name to place its glow. That
+  // comes from the device, so learn it once per device and cache it in the
+  // profile — after that the dashboard never touches the hardware for it.
+  const learned = new Set<string>();
+  $effect(() => {
+    for (const d of deviceStore.devices) {
+      if (!d.capabilities.lighting || !d.online || learned.has(d.id)) continue;
+      const profile = configStore.deviceProfile(d.id);
+      if ((profile.zoneNames ?? []).length > 0) {
+        learned.add(d.id);
+        continue;
+      }
+      learned.add(d.id);
+      api
+        .getLightingZones(d.id)
+        .then((zones) =>
+          configStore.saveDeviceProfile(d.id, {
+            ...configStore.deviceProfile(d.id),
+            zoneNames: zones.map((z) => z.locationName),
+          }),
+        )
+        .catch(() => learned.delete(d.id));
+    }
+  });
 
   /** Devices with a `receiver` kind are dongles, not something to configure. */
   const visible = $derived(deviceStore.devices.filter((d) => d.kind !== "receiver"));
@@ -46,22 +71,24 @@
     <button class="tool" class:spinning={refreshing} onclick={refresh} aria-label="Rescan devices">
       <Icon name="refresh" size={17} />
     </button>
-    <div class="views">
+    <!-- G HUB's view switch: a pill with grid on the left, list on the right. -->
+    <div class="views" role="group" aria-label="Layout">
       <button
-        class="tool"
-        class:active={ui.view === "list"}
-        onclick={() => ui.setView("list")}
-        aria-label="List view"
-      >
-        <Icon name="list" size={17} />
-      </button>
-      <button
-        class="tool"
+        class="view"
         class:active={ui.view === "grid"}
         onclick={() => ui.setView("grid")}
         aria-label="Grid view"
       >
         <Icon name="grid" size={17} />
+      </button>
+      <span class="divider"></span>
+      <button
+        class="view"
+        class:active={ui.view === "list"}
+        onclick={() => ui.setView("list")}
+        aria-label="List view"
+      >
+        <Icon name="list" size={17} />
       </button>
     </div>
   </div>
@@ -86,6 +113,7 @@
           {device}
           glow={glowFor(device.id)}
           brightness={brightnessFor(device.id)}
+          zones={zoneGlowsFor(configStore.deviceProfile(device.id))}
         />
       {/each}
     </div>
@@ -104,30 +132,34 @@
             <DeviceArt
               kind={device.kind}
               productIds={artworkIds(device)}
+              zoneProductIds={artworkIds(device)}
               variant="thumb"
+              zones={zoneGlowsFor(configStore.deviceProfile(device.id))}
               glow={glowFor(device.id)}
               brightness={brightnessFor(device.id)}
             />
           </div>
           <div class="row-main">
-            <div class="row-name">
-              <Icon name={kindIcon(device.kind)} size={15} />
-              {device.name}
-            </div>
+            <div class="row-name">{device.name}</div>
             <div class="row-sub">
-              {connectionLabel(device.connection)}
-              · HID++ {device.protocolVersion || "—"}
-              {#if device.dpi}· {device.dpi.current.toLocaleString()} DPI{/if}
-              {#if device.reportRate}· {device.reportRate.currentHz} Hz{/if}
+              {#if device.battery}
+                <span class="row-pct">{device.battery.percentage}%</span>
+                <Icon name={batteryIcon(device.battery)} size={16} strokeWidth={1.5} />
+              {/if}
+              <Icon name={connectionIcon(device.connection)} size={16} strokeWidth={1.5} />
             </div>
           </div>
-          {#if device.battery}
-            <div class="row-battery">
-              <span>{device.battery.percentage}%</span>
-              <small>{batteryLabel(device.battery)}</small>
-            </div>
-          {/if}
-          <Icon name="chevronRight" size={17} class="row-chev" />
+          <button
+            class="row-action"
+            title={device.capabilities.onboardMemory ? "Onboard memory mode" : "Device settings"}
+            aria-label={device.capabilities.onboardMemory ? "Onboard memory mode" : "Device settings"}
+            onclick={(e) => {
+              e.stopPropagation();
+              goto(`/device/${device.id}/settings`);
+            }}
+          >
+            <Icon name={device.capabilities.onboardMemory ? "onboardOff" : "gear"} size={20} strokeWidth={1.6} />
+          </button>
         </div>
       {/each}
     </div>
@@ -136,9 +168,12 @@
 
 <style>
   .page {
+    --card-w: 328px;
     max-width: var(--content-max);
     margin: 0 auto;
     padding: 0 var(--content-pad) 40px;
+    padding-top: 30px;
+    width: 100%;
   }
 
   .toolbar {
@@ -152,8 +187,37 @@
 
   .views {
     display: flex;
-    gap: 2px;
+    align-items: center;
     margin-left: 8px;
+    padding: 3px;
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+  }
+
+  .view {
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 32px;
+    border-radius: var(--radius);
+    color: var(--text-dim);
+    transition: color 120ms var(--ease), background 120ms var(--ease);
+  }
+
+  .view:hover {
+    color: var(--text);
+  }
+
+  .view.active {
+    color: var(--accent);
+    background: var(--surface-2);
+  }
+
+  .divider {
+    width: 1px;
+    height: 18px;
+    margin: 0 2px;
+    background: var(--line-strong);
   }
 
   .tool {
@@ -171,22 +235,29 @@
     background: var(--surface-2);
   }
 
-  .tool.active {
-    color: var(--text);
-  }
-
   .tool.spinning :global(svg) {
     animation: spin 900ms linear infinite;
   }
 
   .grid {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
     gap: 14px;
   }
 
+  .grid > :global(.card) {
+    width: var(--card-w);
+    flex: none;
+  }
+
+  .grid > :global(.card.wide) {
+    width: calc(var(--card-w) * 2 + 14px);
+  }
+
   .skeleton {
-    min-height: 296px;
+    width: var(--card-w);
+    height: 395px;
     border-radius: var(--radius);
     background: linear-gradient(100deg, var(--surface) 30%, #232323 50%, var(--surface) 70%);
     background-size: 300% 100%;
@@ -199,13 +270,15 @@
     gap: 8px;
   }
 
+  /* G HUB's list row: a wide card with the thumb, a big name and the status. */
   .row {
     display: flex;
     align-items: center;
-    gap: 16px;
-    padding: 12px 16px;
+    gap: 40px;
+    min-height: 130px;
+    padding: 18px 20px 18px 40px;
     border: 1px solid transparent;
-    border-radius: var(--radius);
+    border-radius: var(--radius-lg);
     background: var(--surface);
     cursor: pointer;
     transition: background 130ms var(--ease), border-color 130ms var(--ease);
@@ -217,8 +290,8 @@
   }
 
   .thumb {
-    width: 72px;
-    height: 56px;
+    width: 96px;
+    height: 96px;
     flex: none;
   }
 
@@ -228,40 +301,40 @@
   }
 
   .row-name {
-    display: flex;
-    align-items: center;
-    gap: 8px;
     font-family: var(--font);
-    font-size: 15px;
-    font-weight: 600;
+    font-size: 21px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
   }
 
   .row-sub {
-    margin-top: 3px;
-    font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 10px;
+    color: var(--text-dimmer);
+  }
+
+  .row-pct {
+    font-size: 15px;
+    font-weight: 700;
     color: var(--text-dim);
   }
 
-  .row-battery {
-    text-align: right;
+  .row-action {
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    border-radius: var(--radius);
+    background: var(--surface-2);
+    color: var(--text-dim);
     flex: none;
   }
 
-  .row-battery span {
-    font-family: var(--font);
-    font-size: 15px;
-    font-weight: 600;
-  }
-
-  .row-battery small {
-    display: block;
-    font-size: 11px;
-    color: var(--text-dimmer);
-  }
-
-  .row :global(.row-chev) {
-    color: var(--text-dimmer);
-    flex: none;
+  .row-action:hover {
+    background: var(--surface-3);
+    color: var(--text);
   }
 
   .empty {
@@ -297,14 +370,14 @@
   }
 
   @media (max-width: 1150px) {
-    .grid {
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+    .page {
+      --card-w: 300px;
     }
   }
 
   @media (max-width: 880px) {
-    .grid {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+    .page {
+      --card-w: 260px;
     }
   }
 

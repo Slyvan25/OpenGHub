@@ -25,7 +25,10 @@
 
   onMount(async () => {
     try {
-      apps = await api.getApplications();
+      // Keyed lists must have unique ids; the backend dedupes, but a stale
+      // cache from an older build should not be able to break the picker.
+      const seen = new Set<string>();
+      apps = (await api.getApplications()).filter((a) => !seen.has(a.id) && seen.add(a.id));
     } catch (e) {
       error = api.errorMessage(e);
     } finally {
@@ -43,7 +46,8 @@
     loading = true;
     try {
       await api.refreshApplicationDatabase();
-      apps = await api.getApplications();
+      const seen = new Set<string>();
+      apps = (await api.getApplications()).filter((a) => !seen.has(a.id) && seen.add(a.id));
     } catch (e) {
       error = api.errorMessage(e);
     } finally {

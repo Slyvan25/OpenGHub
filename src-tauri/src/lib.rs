@@ -3,8 +3,10 @@
 pub mod apps;
 pub mod artwork;
 pub mod commands;
+pub mod community;
 pub mod demo;
 pub mod depot;
+pub mod games;
 pub mod hidpp;
 pub mod profiles;
 pub mod state;
@@ -33,6 +35,7 @@ pub fn run() {
         .manage(DeviceManager::new())
         .manage(Store::load())
         .manage(std::sync::Arc::new(apps::AppDatabase::new()))
+        .manage(games::Library::default())
         .setup(|app| {
             let handle = app.handle().clone();
 
@@ -68,6 +71,16 @@ pub fn run() {
             commands::refresh_application_database,
             commands::get_active_application,
             commands::bind_profile_application,
+            commands::set_profile_disabled,
+            commands::get_community_index,
+            commands::preview_community_profile,
+            commands::import_community_profile,
+            commands::export_profile,
+            commands::get_games,
+            commands::launch_game,
+            commands::add_manual_game,
+            commands::remove_manual_game,
+            commands::write_text_file,
             commands::backup_onboard_memory,
             commands::get_onboard_profiles,
             commands::apply_onboard_macros,
@@ -210,9 +223,15 @@ fn spawn_application_watcher(app: tauri::AppHandle) {
             if !cfg.settings.auto_switch_profiles {
                 continue;
             }
+            let persistent = cfg.settings.persistent_profile.as_str();
             let target = match &current {
-                Some(id) => cfg.profiles.iter().find(|p| p.application_id.as_deref() == Some(id)),
-                None => cfg.profiles.iter().find(|p| p.id == "default"),
+                Some(id) => cfg
+                    .profiles
+                    .iter()
+                    .find(|p| !p.disabled && p.application_id.as_deref() == Some(id))
+                    // A disabled game behaves as if it were not running.
+                    .or_else(|| cfg.profiles.iter().find(|p| p.id == persistent)),
+                None => cfg.profiles.iter().find(|p| p.id == persistent),
             };
             if let Some(profile) = target {
                 if profile.id != cfg.active_profile {

@@ -215,7 +215,16 @@ impl AppDatabase {
         let mut by_steam_id = HashMap::new();
         let mut by_executable = HashMap::new();
 
+        let mut seen_ids = std::collections::HashSet::new();
         for raw in db.applications {
+            // The feed carries a couple of quirks: untranslated placeholder
+            // entries (`APPLICATION_NAME_DESKTOP` — G HUB's built-in Desktop
+            // pseudo-app) and an id shared by CS:GO and CS2. Keyed UI lists
+            // choke on duplicates, so keep the first of each id and drop the
+            // placeholders; Desktop is built into OpenGHub anyway.
+            if raw.name.starts_with("APPLICATION_NAME_") || !seen_ids.insert(raw.application_id.clone()) {
+                continue;
+            }
             let mut steam_app_ids = Vec::new();
             let mut executables = Vec::new();
             for rule in &raw.detection {
@@ -388,6 +397,25 @@ mod tests {
         assert_eq!(tf2.executables, vec!["titanfall2.exe"]);
         let r6 = apps.iter().find(|a| a.id == "r6").unwrap();
         assert_eq!(r6.executables, vec!["rainbowsix.exe"]);
+    }
+
+    #[test]
+    fn duplicate_ids_and_placeholders_are_dropped() {
+        // Mirrors the real feed: CS:GO and CS2 share an id, and the Desktop
+        // pseudo-app appears twice under an untranslated name.
+        let json = r##"{"applications":[
+          {"applicationId":"cs","name":"Counter-Strike 2","detection":[],"commands":[]},
+          {"applicationId":"cs","name":"Counter-Strike: Global Offensive","detection":[],"commands":[]},
+          {"applicationId":"dt","name":"APPLICATION_NAME_DESKTOP","detection":[],"commands":[]},
+          {"applicationId":"dt","name":"APPLICATION_NAME_DESKTOP","detection":[],"commands":[]},
+          {"applicationId":"ow","name":"Overwatch 2","detection":[],"commands":[]}
+        ]}"##;
+        let db = AppDatabase::new();
+        db.install(json, "t".into(), SystemTime::UNIX_EPOCH).unwrap();
+        let apps = db.applications();
+        let ids: Vec<_> = apps.iter().map(|a| a.id.as_str()).collect();
+        assert_eq!(ids, vec!["cs", "ow"]);
+        assert_eq!(apps[0].name, "Counter-Strike 2", "first occurrence wins");
     }
 
     #[test]

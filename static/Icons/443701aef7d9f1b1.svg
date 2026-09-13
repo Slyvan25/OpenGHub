@@ -1,0 +1,36 @@
+<svg width="30" height="30" viewBox="0 0 30 30" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+        <clipPath id="s1ky3chsqa">
+            <path d="M1120 0v768H0V0h1120z"/>
+        </clipPath>
+        <clipPath id="k3kj5xrdab">
+            <path d="M13 0a1 1 0 0 1 1 1v20a1 1 0 0 1-1 1H1a1 1 0 0 1-1-1V1a1 1 0 0 1 1-1h12z"/>
+        </clipPath>
+        <clipPath id="cgrds2axtc">
+            <path d="M3 0a3 3 0 1 1 0 6 3 3 0 0 1 0-6z"/>
+        </clipPath>
+        <clipPath id="oofc4rdwnd">
+            <path d="M2 0a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H1a1 1 0 0 1-1-1V1a1 1 0 0 1 1-1h1z"/>
+        </clipPath>
+        <clipPath id="mxr239os8e">
+            <path d="M6 0a1 1 0 1 1 0 2H1a1 1 0 1 1 0-2h5z"/>
+        </clipPath>
+    </defs>
+    <g clip-path="url(#s1ky3chsqa)" transform="translate(-20 -109)">
+        <g clip-path="url(#k3kj5xrdab)" transform="translate(28 113)">
+            <path d="M1 0h12a1 1 0 0 1 1 1v20a1 1 0 0 1-1 1H1a1 1 0 0 1-1-1V1a1 1 0 0 1 1-1z" stroke="#FFF" stroke-width="4" fill="none" stroke-miterlimit="5"/>
+        </g>
+        <g clip-path="url(#cgrds2axtc)" transform="translate(32 121)">
+            <path d="M3 6a3 3 0 1 0 0-6 3 3 0 0 0 0 6z" stroke="#FFF" stroke-width="4" fill="none" stroke-miterlimit="5"/>
+        </g>
+        <g clip-path="url(#oofc4rdwnd)" transform="translate(41 118)">
+            <path fill="#FFF" d="M0 0h3v4H0V0z"/>
+        </g>
+        <g clip-path="url(#oofc4rdwnd)" transform="translate(41 126)">
+            <path fill="#FFF" d="M0 0h3v4H0V0z"/>
+        </g>
+        <g clip-path="url(#mxr239os8e)" transform="translate(22 123)">
+            <path fill="#FFF" d="M0 0h7v2H0V0z"/>
+        </g>
+    </g>
+</svg>

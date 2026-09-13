@@ -110,25 +110,34 @@
   let boxW = $state(1);
   let boxH = $state(1);
 
-  // The photo is `object-fit: contain` with 4% padding, so the image occupies
-  // a centred sub-rectangle of the box. Layout coordinates are fractions of
-  // the *image*, so map them into that sub-rectangle.
-  const PAD = 0.04;
+  // The photo is `object-fit: contain` inside a 4% padding, so the image
+  // occupies a centred sub-rectangle of the box. Layout coordinates are
+  // fractions of the *image*, so they are mapped into that sub-rectangle.
+  // Note CSS percentage padding is relative to the box *width* on every side.
+  const PAD = $derived(className.includes("tight") ? 0 : 0.04);
   const imgAspect = $derived(layoutView ? layoutView.width / layoutView.height : 1);
-  const inner = $derived({ w: boxW * (1 - 2 * PAD), h: boxH * (1 - 2 * PAD) });
-  const fit = $derived.by(() => {
-    const boxAspect = inner.w / Math.max(1, inner.h);
-    if (imgAspect > boxAspect) {
-      const w = inner.w;
-      return { w, h: w / imgAspect };
+  const geom = $derived.by(() => {
+    const pad = PAD * boxW;
+    const innerW = Math.max(1, boxW - 2 * pad);
+    const innerH = Math.max(1, boxH - 2 * pad);
+    let w: number, h: number;
+    if (imgAspect > innerW / innerH) {
+      w = innerW;
+      h = w / imgAspect;
+    } else {
+      h = innerH;
+      w = h * imgAspect;
     }
-    const h = inner.h;
-    return { w: h * imgAspect, h };
+    const left = pad + (innerW - w) / 2;
+    const top = pad + (innerH - h) / 2;
+    const bw = Math.max(1, boxW);
+    const bh = Math.max(1, boxH);
+    return { w: (w / bw) * 100, h: (h / bh) * 100, left: (left / bw) * 100, top: (top / bh) * 100 };
   });
-  const imgW = $derived((fit.w / Math.max(1, boxW)) * 100);
-  const imgH = $derived((fit.h / Math.max(1, boxH)) * 100);
-  const imgLeft = $derived(((boxW - fit.w) / 2 / Math.max(1, boxW)) * 100);
-  const imgTop = $derived(((boxH - fit.h) / 2 / Math.max(1, boxH)) * 100);
+  const imgW = $derived(geom.w);
+  const imgH = $derived(geom.h);
+  const imgLeft = $derived(geom.left);
+  const imgTop = $derived(geom.top);
 
   function moveZone(event: PointerEvent, index: number, spot: ZoneSpot) {
     if (!artBox) return;
@@ -475,6 +484,7 @@
 
 <style>
   .art {
+    position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -497,19 +507,26 @@
   }
 
   .photo-wrap {
-    position: relative;
-    width: 100%;
-    height: 100%;
-    min-height: 0;
-    display: grid;
-    place-items: center;
+    /* Absolutely pinned: a percentage height on an <img> only works when its
+       parent has a definite height, and a flex/grid item's often is not. */
+    position: absolute;
+    inset: 0;
   }
 
   .photo {
+    position: absolute;
+    inset: 0;
     width: 100%;
     height: 100%;
     object-fit: contain;
     padding: 4%;
+    box-sizing: border-box;
+    z-index: 25;
+  }
+
+  /* Callers that size the box to the image exactly opt out of the padding. */
+  .art.tight .photo {
+    padding: 0;
   }
 
   .zone-glow {

@@ -18,6 +18,8 @@ kernel module, no proprietary daemon.
 | Feature enumeration & diagnostics (`0x0001`) | ✅ |
 | Profiles, per-device settings, persistence | ✅ |
 | Per-game profiles: detection, auto-switch, game command sets | ✅ via Logitech's public application database |
+| Community profiles: browse, preview, import, share | ✅ from an open Git repository ([openghub-community](https://github.com/Slyvan25/openghub-community)) |
+| Games library & launcher | ✅ Steam, Heroic (Epic / GOG), Lutris and manually added executables |
 | Device renders, thumbnails, exact zone & button geometry | ✅ imported from a G HUB install, or fetched from Logitech's CDN per device |
 | RGB lighting (`0x8070`) | ✅ per zone: off / fixed / breathing / colour cycle |
 | Macros on onboard memory (`0x8100`) | ✅ recorded, written to device flash, backed up first |
@@ -98,6 +100,47 @@ OpenGHub therefore takes host mode lazily: lighting always claims it up front, b
 silently-dropped write gives nothing to react to, while DPI and report rate only claim it after
 a write is actually refused. A device that is happy in onboard mode is left alone.
 
+### Community profiles
+
+G HUB's Community tab is a closed Logitech service. OpenGHub's is an open Git repository —
+[`Slyvan25/openghub-community`](https://github.com/Slyvan25/openghub-community) by default,
+changeable in Settings — with one JSON file per profile and an `index.json` that CI
+regenerates on every push. The client needs nothing but HTTPS to `raw.githubusercontent.com`.
+
+- **Browse** the index under Community, filtered to your connected devices by product id.
+- **Preview** shows everything a profile contains before import — every macro step included,
+  because a macro is a keystroke sequence and nobody should import one blind.
+- **Import** creates a new local profile applied to the matching device(s). Nothing touches
+  hardware until the user applies it through the normal screens.
+- **Share** (Profiles → ⋮ → Share…) exports a profile for one device as the same JSON, ready
+  for a pull request. Contributions are CC0.
+
+`src-tauri/src/community.rs` holds the format (`format: 1`), validation, and the fetcher;
+`cargo run --example community -- <repo-url>` exercises it against any repository.
+
+### The Games tab
+
+G HUB's Games tab is a launcher: every installed game as a poster tile, filtered by store.
+OpenGHub reads the launchers that exist on Linux, all read-only:
+
+- **Steam** — `steamapps/libraryfolders.vdf` lists the library folders and every
+  `appmanifest_*.acf` in them is an installed app. Last-played and playtime come from
+  `userdata/<id>/config/localconfig.vdf`. Portrait covers are Steam's own
+  `appcache/librarycache/<appid>/library_600x900.jpg`, with the public CDN as fallback.
+  Proton, the Steam Linux Runtime and Steamworks redistributables are hidden.
+- **Epic Games / GOG** — through Heroic's `store_cache/{legendary,gog}_library.json`.
+- **Lutris** — `lutris --list-games --installed --json`; entries whose runner is Steam are
+  skipped because Steam already lists them.
+- **Manually installed** — any executable, added with **+** or under *Manage*; stored in the
+  config with an optional cover.
+
+Covers are copied into `~/.local/share/openghub/games/` so the webview can load them without
+the asset protocol being opened to every launcher's data directory. Games are matched to
+Logitech's application database by Steam app id (or exact name), which is what links a tile to
+its profile: *Profile* jumps to it, *Add profile* creates and binds one. Launching goes through
+the owning launcher (`steam://rungameid/…`, `heroic://launch/…`, `lutris:rungame/…`), so
+profile auto-switching then works the usual way. `cargo run --example games` dumps the scan.
+
 ### Per-game profiles and the application database
 
 G HUB keys profiles on the running game and shows each game's own keybinds in the COMMANDS
@@ -150,6 +193,14 @@ The format was established by reading a real G502 rather than from documentation
 `$XDG_DATA_HOME/openghub/backups/<pid>-<timestamp>.json`, containing every sector verbatim.
 `restore_onboard_memory` puts one back. Use `cargo run --example onboard -- --backup` to take
 one by hand.
+
+The macro editor follows G HUB's three steps (name → type → build) and its four types — *no
+repeat*, *repeat while holding*, *toggle*, *sequence* with on-press / while-holding / on-release
+sections. The onboard macro format only has a flat keystroke list, so **the type is kept in the
+profile for editing but the device always receives the flattened sequence**. Likewise G HUB's
+*Action*, *Launch application* and *System* entries run on the host and are shown disabled;
+recorded keystrokes, typed ASCII text and delays are what a device can play. "Use standard
+delays" replaces the recorded timing with a fixed gap when the macro is flattened.
 
 ### Button remapping is device-specific
 
@@ -281,40 +332,26 @@ cd src-tauri && cargo run --example lighting   # per-zone lighting capabilities
 
 Stop the app first, so the two are not driving the same device at once.
 
-### Known dev-server quirk
+### A dev-server race, and why `vite.config.js` warms the client graph
 
-On a cold start — the first run after `node_modules/.vite` is cleared, or after dependencies
-change — Vite re-optimises deps and forces a page reload mid-load. That can race
-`vite-plugin-svelte`'s one-shot CSS cache, and you get:
+With Vite 8, SvelteKit 2 and vite-plugin-svelte 7, components would intermittently render
+**unstyled** in `npm run tauri dev`, with this in the log:
 
 ```
 [vite-plugin-svelte:load] failed to load virtual css module …/Foo.svelte?svelte&type=style&lang.css
 ```
 
-Any component caught by the race loads its raw source in place of its stylesheet, so it renders
-unstyled. Restart the dev server; the second run has a warm cache and is clean. Production
-builds are unaffected.
+The plugin serves a component's CSS from `getModuleInfo(...).meta.svelte.css` in the
+*current* environment. Vite 8 keeps the client and SSR module graphs apart, and SvelteKit emits
+`<link>` tags for those virtual CSS modules that the browser fetches **before** the component's
+own JS. If the client graph has not transformed the component by then, the plugin finds no CSS
+and falls back to serving the raw `.svelte` source as the stylesheet. Which components lose the
+race depends on timing, so it looked random.
 
-## Architecture
-
-```
-src-tauri/src/
-  hidpp/mod.rs        packet framing, transport, feature discovery, enumeration
-  hidpp/features.rs   typed wrappers: battery, DPI, report rate, lighting
-  hidpp/registry.rs   product-id → name/category table (display hints only)
-  state.rs            DeviceManager: open handles, cached snapshots, receiver probing
-  commands.rs         Tauri IPC surface
-  profiles.rs         JSON config store (XDG config dir)
-  demo.rs             synthetic devices used when no hardware is reachable
-  lib.rs              app setup, tray, background battery poller
-
-src/
-  routes/             SvelteKit SPA: dashboard, /device/[id]/[tab], /profiles, /settings
-  lib/components/     chrome and controls (device cards, sliders, colour picker, DPI track)
-  lib/views/          Sensitivity, Assignments, LIGHTSYNC, Settings
-  lib/stores/         Svelte 5 rune stores for devices, config and UI state
-  lib/api.ts          typed IPC bindings, with a browser fallback
-```
+`server.warmup.clientFiles` in `vite.config.js` pre-transforms every component in the client
+environment at startup, so the `<link>` requests always hit. Verified across repeated cold and
+warm starts. (`emitCss: false` is not an option: SvelteKit needs the emitted CSS.) Production
+builds were never affected.
 
 ### How HID++ works here
 
@@ -329,6 +366,16 @@ desynchronising the exchange.
 
 Receivers are bridges, not devices: each of their six child slots (`device_index` 1–6) is
 pinged and probed independently.
+
+### Design tokens
+
+Colours, radii and type come from G HUB's own stylesheet — Logitech's `@logi/magnetite` design
+system, token prefix `dls` — read out of the app bundle, so `src/app.css` matches the real
+application rather than an approximation: surface `#212225`, primary `#1196ff`, brand cyan
+`#00a9e0`, text `#a7a7a8` / labels `#afb1b4`, outlines at 10 % white, panels 310 px wide with a
+12 px radius, titles 24 px / 700 / −0.96 px tracking. G HUB's font is Lineto's Brown
+(`BrownPro`, `BrownLogitechPan`), which is commercial and therefore not bundled; the stack
+lists it first so anyone who has it gets it.
 
 ### Device artwork
 

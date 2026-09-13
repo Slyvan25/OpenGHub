@@ -16,11 +16,7 @@ export type MacroStep =
   | { step: "mouseUp"; mask: number }
   | { step: "delay"; ms: number };
 
-export interface MacroDef {
-  id: string;
-  name: string;
-  steps: MacroStep[];
-}
+export type { MacroDef } from "./types";
 
 /** `KeyboardEvent.code` → HID keyboard usage. */
 const USAGES: Record<string, number> = {

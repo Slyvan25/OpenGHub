@@ -1,15 +1,16 @@
 <script lang="ts">
   /**
-   * Device page chrome, laid out like G HUB: profile header across the top, a
-   * narrow icon rail down the left, and the active section filling the rest.
+   * Device page chrome, laid out like G HUB: the top bar with its tabs is gone,
+   * replaced by "← DEVICE NAME" with the profile picker on the right; a narrow
+   * icon rail runs down the left with the gear parked at the bottom, and the
+   * active section fills the rest.
    */
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
   import Icon from "$lib/components/Icon.svelte";
-  import { batteryIcon, batteryLabel, connectionLabel, defaultTab, tabsFor } from "$lib/device-ui";
-  import { configStore } from "$lib/stores/config.svelte";
+  import ProfilePicker from "$lib/components/ProfilePicker.svelte";
+  import { defaultTab, tabsFor } from "$lib/device-ui";
   import { deviceStore } from "$lib/stores/devices.svelte";
-  import { ui } from "$lib/stores/ui.svelte";
 
   let { children } = $props();
 
@@ -17,7 +18,6 @@
   const device = $derived(deviceStore.get(deviceId));
   const currentTab = $derived(page.params.tab ?? (device ? defaultTab(device) : "settings"));
   const tabs = $derived(device ? tabsFor(device) : []);
-  /** The gear sits apart from the rail, as in G HUB. */
   const railTabs = $derived(tabs.filter((t) => t.id !== "settings"));
 </script>
 
@@ -31,37 +31,17 @@
 {:else}
   <div class="device-page">
     <header class="head">
-      <button class="back" onclick={() => goto("/")} aria-label="Back to dashboard">
-        <Icon name="arrowLeft" size={20} />
+      <button class="back" onclick={() => goto("/")} aria-label="Back to devices">
+        <Icon name="arrowLeft" size={22} strokeWidth={1.8} />
       </button>
+      <h1>{device.name}</h1>
 
-      <div class="profile">
-        <div class="profile-kind">Persistent profile</div>
-        <button class="profile-name" onclick={() => (ui.profilePickerOpen = true)}>
-          <Icon name="lock" size={13} />
-          <strong>{configStore.active?.name ?? "Desktop: Default"}</strong>
-          <Icon name="chevronDown" size={14} />
+      <div class="right">
+        <ProfilePicker />
+        <button class="icon-btn" aria-label="Account">
+          <Icon name="user" size={20} strokeWidth={1.7} />
         </button>
       </div>
-
-      <div class="status">
-        {#if device.battery}
-          <span class:low={device.battery.percentage <= 20}>
-            <Icon name={batteryIcon(device.battery)} size={13} />
-            {device.battery.percentage}% · {batteryLabel(device.battery)}
-          </span>
-        {/if}
-        <span>{connectionLabel(device.connection)}</span>
-      </div>
-
-      <a
-        class="gear"
-        class:active={currentTab === "settings"}
-        href="/device/{device.id}/settings"
-        aria-label="Device settings"
-      >
-        <Icon name="gear" size={19} />
-      </a>
     </header>
 
     <div class="body">
@@ -74,9 +54,18 @@
             title={tab.label}
             aria-label={tab.label}
           >
-            <Icon name={tab.icon} size={21} strokeWidth={1.6} />
+            <Icon name={tab.icon} size={22} strokeWidth={1.7} />
           </a>
         {/each}
+        <a
+          class="tab gear"
+          class:active={currentTab === "settings"}
+          href="/device/{device.id}/settings"
+          title="Settings"
+          aria-label="Device settings"
+        >
+          <Icon name="gear" size={22} strokeWidth={1.7} />
+        </a>
       </nav>
 
       <div class="content">
@@ -91,120 +80,90 @@
     display: flex;
     flex-direction: column;
     height: 100%;
-    max-width: var(--content-max);
-    margin: 0 auto;
-    padding: 0 var(--content-pad) 18px;
+    padding: 0 0 20px;
   }
 
+  /* Same height as the top bar it replaces, so the page doesn't jump. */
   .head {
     flex: none;
     display: flex;
     align-items: center;
-    gap: 16px;
-    padding: 0 0 18px;
+    gap: 18px;
+    height: var(--topbar-h);
+    padding: 0 24px 0 24px;
   }
 
   .back {
     display: grid;
     place-items: center;
-    width: 34px;
-    height: 34px;
+    width: 36px;
+    height: 36px;
     border-radius: var(--radius-sm);
-    color: var(--text-dim);
+    color: var(--text);
   }
 
   .back:hover {
-    background: var(--surface-2);
-    color: var(--text);
+    background: var(--surface);
   }
 
-  .profile-kind {
-    font-size: 10.5px;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
-    color: var(--text-dim);
+  h1 {
+    font-size: 30px;
+    font-weight: 700;
+    letter-spacing: -0.6px;
+    line-height: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
-  .profile-name {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    margin-top: 1px;
-    color: var(--cyan);
-    font-size: 15px;
-  }
-
-  .profile-name strong {
-    font-family: var(--font);
-    font-weight: 600;
-    letter-spacing: 0.02em;
-    text-transform: uppercase;
-  }
-
-  .profile-name:hover {
-    filter: brightness(1.15);
-  }
-
-  .status {
+  .right {
     margin-left: auto;
     display: flex;
-    gap: 16px;
-    font-size: 12px;
-    color: var(--text-dim);
-  }
-
-  .status span {
-    display: inline-flex;
     align-items: center;
-    gap: 5px;
+    gap: 22px;
   }
 
-  .status .low {
-    color: var(--warning);
-  }
-
-  .gear {
+  .icon-btn {
     display: grid;
     place-items: center;
-    width: 34px;
-    height: 34px;
-    border-radius: var(--radius-sm);
-    color: var(--text-dim);
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    color: var(--text);
   }
 
-  .gear:hover,
-  .gear.active {
-    background: var(--surface-2);
-    color: var(--text);
+  .icon-btn:hover {
+    background: var(--surface);
   }
 
   .body {
     flex: 1;
     display: grid;
-    grid-template-columns: 56px minmax(0, 1fr);
-    gap: 10px;
+    grid-template-columns: 76px minmax(0, 1fr);
     min-height: 0;
+    padding-top: 12px;
   }
 
   .rail {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    align-items: center;
+    gap: 6px;
+    padding-top: 22px;
   }
 
   .tab {
     display: grid;
     place-items: center;
-    width: 56px;
-    height: 56px;
-    border-radius: var(--radius-sm);
-    background: var(--surface);
+    width: 46px;
+    height: 46px;
+    border-radius: var(--radius);
     color: var(--text-dim);
     transition: background 130ms var(--ease), color 130ms var(--ease);
   }
 
   .tab:hover {
-    background: var(--surface-hover);
+    background: var(--surface);
     color: var(--text);
   }
 
@@ -213,10 +172,21 @@
     color: #fff;
   }
 
+  .tab.gear {
+    margin-top: auto;
+    background: var(--surface);
+    color: var(--text);
+  }
+
+  .tab.gear.active {
+    background: var(--accent);
+  }
+
   .content {
     display: flex;
     min-width: 0;
     min-height: 0;
+    padding-right: 24px;
     overflow: hidden;
   }
 

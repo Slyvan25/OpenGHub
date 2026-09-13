@@ -325,6 +325,7 @@ pub async fn create_profile(
             kind: kind.unwrap_or_else(|| "game".into()),
             application_id: None,
             poster_url: None,
+            disabled: false,
             devices: Default::default(),
         });
         cfg.active_profile = id.clone();
@@ -430,6 +431,21 @@ pub async fn get_active_application(
     Ok(db.detect_running())
 }
 
+/// Disables or re-enables a game's profile without deleting it.
+#[tauri::command]
+pub async fn set_profile_disabled(
+    store: State<'_, Store>,
+    profile_id: String,
+    disabled: bool,
+) -> Result<Config> {
+    store.update(|cfg| {
+        if let Some(p) = cfg.profiles.iter_mut().find(|p| p.id == profile_id) {
+            p.disabled = disabled;
+        }
+    })?;
+    Ok(store.get())
+}
+
 /// Binds a profile to an application so it activates when that game runs.
 #[tauri::command]
 pub async fn bind_profile_application(
@@ -455,6 +471,203 @@ pub async fn bind_profile_application(
         }
     })?;
     Ok(store.get())
+}
+
+// ---------------------------------------------------------------------------
+// Games library
+// ---------------------------------------------------------------------------
+
+use crate::games::{self, Game, Library};
+
+/// The installed games from every launcher on this machine. Cached after the
+/// first scan; `refresh` re-reads the launchers.
+#[tauri::command]
+pub async fn get_games(
+    library: State<'_, Library>,
+    store: State<'_, Store>,
+    db: State<'_, std::sync::Arc<crate::apps::AppDatabase>>,
+    refresh: bool,
+) -> Result<Vec<Game>> {
+    if !refresh {
+        if let Some(games) = library.cached() {
+            return Ok(games);
+        }
+    }
+    let manual = store.get().manual_games;
+    let db = db.inner().clone();
+    let games = tauri::async_runtime::spawn_blocking(move || games::scan(&manual, &db))
+        .await
+        .map_err(|e| Error::other(e.to_string()))?;
+    library.set(games.clone());
+    Ok(games)
+}
+
+/// Starts a game through its launcher. Nothing else changes: profile switching
+/// happens through the usual watcher once the process is up.
+#[tauri::command]
+pub async fn launch_game(store: State<'_, Store>, game_id: String) -> Result<()> {
+    let manual = store.get().manual_games;
+    tauri::async_runtime::spawn_blocking(move || games::launch(&game_id, &manual))
+        .await
+        .map_err(|e| Error::other(e.to_string()))?
+}
+
+#[tauri::command]
+pub async fn add_manual_game(
+    store: State<'_, Store>,
+    library: State<'_, Library>,
+    name: String,
+    exec: String,
+    args: Option<String>,
+    cover: Option<String>,
+) -> Result<Config> {
+    let game = games::new_manual_game(&name, &exec, args.as_deref().unwrap_or(""), cover.as_deref())?;
+    store.update(|cfg| cfg.manual_games.push(game))?;
+    library.invalidate();
+    Ok(store.get())
+}
+
+#[tauri::command]
+pub async fn remove_manual_game(
+    store: State<'_, Store>,
+    library: State<'_, Library>,
+    id: String,
+) -> Result<Config> {
+    store.update(|cfg| cfg.manual_games.retain(|g| g.id != id))?;
+    library.invalidate();
+    Ok(store.get())
+}
+
+// ---------------------------------------------------------------------------
+// Community profiles
+// ---------------------------------------------------------------------------
+
+use crate::community::{self, CommunityIndex, SharedProfile};
+
+#[tauri::command]
+pub async fn get_community_index(store: State<'_, Store>, refresh: bool) -> Result<CommunityIndex> {
+    let repo = store.get().settings.community_repo;
+    tauri::async_runtime::spawn_blocking(move || community::fetch_index(&repo, refresh))
+        .await
+        .map_err(|e| Error::other(e.to_string()))?
+}
+
+/// Fetches one shared profile so the UI can show what it contains — DPI,
+/// lighting and every macro step — before the user decides to import it.
+#[tauri::command]
+pub async fn preview_community_profile(
+    store: State<'_, Store>,
+    path: String,
+) -> Result<SharedProfile> {
+    let repo = store.get().settings.community_repo;
+    tauri::async_runtime::spawn_blocking(move || community::fetch_profile(&repo, &path))
+        .await
+        .map_err(|e| Error::other(e.to_string()))?
+}
+
+/// Imports a shared profile as a new local profile. The settings are applied
+/// to every connected device whose product id the profile lists; nothing is
+/// written to hardware here — that still happens through the normal screens.
+#[tauri::command]
+pub async fn import_community_profile(
+    store: State<'_, Store>,
+    manager: State<'_, DeviceManager>,
+    shared: SharedProfile,
+) -> Result<Config> {
+    community::validate(&shared)?;
+
+    // Which local devices this profile targets.
+    let targets: Vec<String> = manager
+        .snapshots()
+        .into_iter()
+        .filter(|d| {
+            let mut ids = d.model_ids.clone();
+            ids.push(d.product_id);
+            ids.iter().any(|id| shared.device.product_ids.contains(id))
+        })
+        .map(|d| d.id)
+        .collect();
+    if targets.is_empty() {
+        return Err(Error::other(format!(
+            "no connected device matches this profile ({}). Connect it and try again.",
+            shared.device.display_name.as_str()
+        )));
+    }
+
+    let id = format!("c{}", std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0));
+    store.update(|cfg| {
+        let mut devices = std::collections::HashMap::new();
+        for target in &targets {
+            devices.insert(target.clone(), shared.profile.clone());
+        }
+        cfg.profiles.push(Profile {
+            id: id.clone(),
+            name: shared.name.clone(),
+            kind: if shared.application.is_some() { "game".into() } else { "app".into() },
+            application_id: shared.application.as_ref().map(|a| a.id.clone()),
+            poster_url: None,
+            disabled: false,
+            devices,
+        });
+    })?;
+    Ok(store.get())
+}
+
+/// Builds the shareable JSON for a profile + device, ready to be saved and
+/// contributed to the community repository with a pull request.
+#[tauri::command]
+pub async fn export_profile(
+    store: State<'_, Store>,
+    manager: State<'_, DeviceManager>,
+    profile_id: String,
+    device_id: String,
+    description: String,
+) -> Result<String> {
+    let cfg = store.get();
+    let profile = cfg
+        .profiles
+        .iter()
+        .find(|p| p.id == profile_id)
+        .ok_or_else(|| Error::other("unknown profile"))?;
+    let snapshot = manager.snapshot(&device_id).ok_or(Error::NotConnected)?;
+
+    // Prefer G HUB's model id when the device database is cached; otherwise a
+    // name-derived slug is still a stable enough key.
+    let model_id = crate::depot::load_cache()
+        .ok()
+        .and_then(|(_, defs)| {
+            defs.into_iter()
+                .find(|d| d.product_ids.iter().any(|p| *p == snapshot.product_id || snapshot.model_ids.contains(p)))
+                .map(|d| d.model_id)
+        })
+        .unwrap_or_else(|| community::slugify(&snapshot.name).replace('-', "_"));
+
+    let mut product_ids = snapshot.model_ids.clone();
+    if !product_ids.contains(&snapshot.product_id) {
+        product_ids.push(snapshot.product_id);
+    }
+    let device = community::TargetDevice {
+        model_id,
+        product_ids,
+        display_name: snapshot.name.clone(),
+        kind: format!("{:?}", snapshot.kind).to_lowercase(),
+    };
+    let author = if cfg.settings.author_name.trim().is_empty() {
+        "anonymous".to_string()
+    } else {
+        cfg.settings.author_name.clone()
+    };
+    let shared = community::export(profile, &device_id, device, &author, &description)?;
+    serde_json::to_string_pretty(&shared).map_err(|e| Error::other(e.to_string()))
+}
+
+/// Writes the exported JSON where the user chose (via the save dialog).
+#[tauri::command]
+pub async fn write_text_file(path: String, contents: String) -> Result<()> {
+    std::fs::write(&path, contents).map_err(|e| Error::other(format!("could not write {path}: {e}")))
 }
 
 // ---------------------------------------------------------------------------

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="10px" height="10px" viewBox="0 0 10 10" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    <!-- Generator: Sketch 51.1 (57501) - http://www.bohemiancoding.com/sketch -->
+    <title>Group 10</title>
+    <desc>Created with Sketch.</desc>
+    <defs></defs>
+    <g id="Macro" stroke="none" stroke-width="1" fill="none" fill-rule="evenodd" stroke-linejoin="round">
+        <g id="Create-new-macro_4_empty-editor-Copy-3" transform="translate(-139.000000, -492.000000)" stroke="#000000" stroke-width="1.25">
+            <g id="Group-9" transform="translate(128.000000, 479.000000)">
+                <g id="Group-10" transform="translate(12.000000, 14.000000)">
+                    <polyline id="Path-2" points="2.72780203 0 0 0 0 8 8 8 8 5.67387074"></polyline>
+                    <polyline id="Path-3" stroke-linecap="round" points="5 0 8 0 8 3"></polyline>
+                    <path d="M8,0 L4,4" id="Path-4" stroke-linecap="round"></path>
+                </g>
+            </g>
+        </g>
+    </g>
+</svg>

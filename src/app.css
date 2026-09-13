@@ -1,45 +1,62 @@
+@font-face {
+  font-family: BrownPro; /* set name */
+  src: url(/fonts/brown-pro-regular.otf); /* url of the font */
+}
+
+@font-face {
+  font-family: BrownLogitechPan; /* set name */
+  src: url(/fonts/brown-pan-pro-regular.otf); /* url of the font */
+}
+
 /* ---------------------------------------------------------------------------
    OpenGHub design tokens.
    Values are matched against G HUB's dark theme: a true-black canvas, near-black
    cards, a single cyan-blue accent and a three-step grey text ramp.
    --------------------------------------------------------------------------- */
 :root {
+  /* Values taken from G HUB's own stylesheet (Logitech's `@logi/magnetite`
+     design system, token prefix `dls`), so surfaces, accents and type match
+     the real application rather than an approximation of it. The canvas is
+     the one place G HUB departs from its design system: true black. */
   --bg: #000000;
-  --surface: #1b1b1b;
-  --surface-hover: #212121;
-  --surface-2: #262626;
-  --surface-3: #323232;
-  --line: #2b2b2b;
-  --line-strong: #3a3a3a;
+  --surface: #212225;
+  --surface-hover: #26272b;
+  --surface-2: #2a2a2a;
+  --surface-3: #393939;
+  --line: rgba(255, 255, 255, 0.1);
+  --line-strong: rgba(255, 255, 255, 0.3);
 
   --text: #ffffff;
-  --text-dim: #8a8a8a;
-  --text-dimmer: #5c5c5c;
+  --text-dim: #a7a7a8;
+  --text-label: #afb1b4;
+  --text-dimmer: #595b5b;
 
-  --accent: #1a82e2;
-  --accent-hover: #2b90ec;
-  --accent-soft: rgba(26, 130, 226, 0.16);
-  --cyan: #00b5e2;
-  --danger: #e0483b;
-  --warning: #e8a33d;
-  --success: #43c07a;
+  --accent: #1196ff;
+  --accent-hover: #2ba3ff;
+  --accent-soft: rgba(17, 150, 255, 0.15);
+  --cyan: #00a9e0;
+  --secondary: #9e5dff;
+  --tertiary: #ff5e01;
+  --danger: #f54155;
+  --warning: #ff5e01;
+  --success: #00c693;
 
-  --radius-sm: 4px;
+  --radius-sm: 6px;
   --radius: 8px;
   --radius-lg: 12px;
   --radius-pill: 999px;
 
   --titlebar-h: 32px;
-  --topbar-h: 56px;
-  /* The dashboard sits in a centred column with generous gutters, like G HUB. */
+  --topbar-h: 62px;
   --content-max: 1240px;
   --content-pad: 24px;
 
-  /* G HUB ships a geometric sans; fall back through the closest widely
-     installed faces rather than pulling a webfont at runtime. */
-  --font: "Rajdhani", "Barlow", "Montserrat", "Inter", "Segoe UI",
-    "DejaVu Sans", system-ui, sans-serif;
-  --font-ui: "Inter", "Segoe UI", "Noto Sans", "DejaVu Sans", system-ui, sans-serif;
+  /* G HUB ships Lineto's Brown (BrownPro, BrownLogitechPan). It is commercial,
+     so it is not bundled: users who have it get it, everyone else falls
+     through to the closest widely available geometric sans. */
+  --font: "BrownPro", "Brown", "BrownLogitechPan", "DM Sans", "Manrope", "Inter",
+    "Segoe UI", system-ui, sans-serif;
+  --font-ui: var(--font);
 
   --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
 }
@@ -122,13 +139,14 @@ a {
   color: var(--text-dim);
 }
 
+/* G HUB's `.title`: 12px / 700 / 1px tracking, #afb1b4. */
 .section-title {
   font-family: var(--font);
   font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.16em;
+  font-weight: 700;
+  letter-spacing: 1px;
   text-transform: uppercase;
-  color: var(--text-dim);
+  color: var(--text-label);
 }
 
 .card {
