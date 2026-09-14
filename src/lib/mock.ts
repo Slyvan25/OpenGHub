@@ -34,6 +34,7 @@ const devices: Device[] = [
   makeDevice("demo-litra-1", "LITRA BEAM", "light", 0xc901, { zones: 1 }),
   makeDevice("demo-litra-2", "LITRA BEAM", "light", 0xc901, { zones: 1 }),
   makeDevice("demo-yeti-gx", "Yeti GX", "microphone", 0x0ade, { zones: 1 }),
+  makeDevice("demo-g923", "G923 Racing Wheel", "wheel", 0xc267, { wheel: true }),
 ];
 
 interface Options {
@@ -43,6 +44,7 @@ interface Options {
   rates?: number[];
   zones?: number;
   onboard?: boolean;
+  wheel?: boolean;
 }
 
 function makeDevice(
@@ -71,6 +73,7 @@ function makeDevice(
       battery: o.battery !== undefined,
       lighting: !!o.zones,
       onboardMemory: !!o.onboard,
+      wheel: !!o.wheel,
     },
     battery:
       o.battery === undefined
@@ -88,7 +91,10 @@ function makeDevice(
       ? { currentHz: 1000, availableHz: o.rates, extended: false }
       : null,
     lightingZones: o.zones ?? 0,
-    protocolVersion: "4.5",
+    wheel: o.wheel
+      ? { rangeMin: 40, rangeMax: 900, rpmLeds: 5, protocol: "ClassicReport30", driverRunning: true, hardwareCalibration: false }
+      : null,
+    protocolVersion: o.wheel ? "classic" : "4.5",
     demo: true,
     lastError: null,
   };
@@ -157,6 +163,18 @@ function loadConfig(): Config {
 }
 
 let config = loadConfig();
+
+const mockWheel = {
+  rangeDeg: 900,
+  sensitivity: 50,
+  centerSpring: 20,
+  centerSpringInFfbGames: false,
+  ffbGain: 100,
+  centerOffset: 0,
+  trueforceTorque: 100,
+  trueforceAudio: 80,
+  trueforceGameControl: true,
+};
 
 function persist(): Config {
   if (typeof localStorage !== "undefined") {
@@ -317,6 +335,35 @@ export async function mockInvoke<T>(command: string, args: Record<string, unknow
 
     case "backup_onboard_memory":
       return "~/.local/share/openghub/backups/mock.json" as T;
+
+    case "get_wheel_state": {
+      const t = Date.now() / 1000;
+      return {
+        steeringRaw: 32768 + Math.round(Math.sin(t) * 20000),
+        steering: Math.sin(t) * 0.6,
+        accelerator: (Math.sin(t * 1.3) + 1) / 2,
+        brake: 0,
+        clutch: 0,
+        buttons: 0,
+        hat: 8,
+      } as T;
+    }
+    case "get_wheel_settings":
+      return mockWheel as T;
+    case "set_wheel_settings":
+      Object.assign(mockWheel, args.settings as object);
+      return { ...mockWheel } as T;
+    case "calibrate_wheel_center":
+      mockWheel.centerOffset = 120;
+      return { ...mockWheel } as T;
+    case "reset_wheel_center":
+      mockWheel.centerOffset = 0;
+      return { ...mockWheel } as T;
+    case "set_wheel_leds":
+      return undefined as T;
+    case "set_wheel_driver":
+      config.settings.wheelDriver = args.enabled as boolean;
+      return persist() as T;
 
     case "get_games":
       return [

@@ -2545,6 +2545,7 @@ dependencies = [
  "directories",
  "env_logger",
  "hidapi",
+ "libc",
  "log",
  "parking_lot",
  "serde",

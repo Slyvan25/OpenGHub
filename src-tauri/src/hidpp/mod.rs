@@ -542,6 +542,11 @@ pub fn enumerate(api: &HidApi) -> Vec<Endpoint> {
         if info.vendor_id() != LOGITECH_VID {
             continue;
         }
+        // Classic wheels have a HID++-shaped interface that never answers;
+        // they are driven by `wheel` instead.
+        if crate::wheel::is_classic(info.product_id()) {
+            continue;
+        }
         let usage_page = info.usage_page();
         let iface = info.interface_number();
         let looks_vendor = usage_page == 0xff00 || (usage_page == 0 && (iface == 1 || iface == 2));

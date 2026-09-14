@@ -4,9 +4,10 @@
   import Icon from "$lib/components/Icon.svelte";
   import Segmented from "$lib/components/Segmented.svelte";
   import { batteryLabel, connectionLabel } from "$lib/device-ui";
+  import { configStore } from "$lib/stores/config.svelte";
   import { deviceStore } from "$lib/stores/devices.svelte";
   import { ui } from "$lib/stores/ui.svelte";
-  import type { Device, FeatureInfo } from "$lib/types";
+  import type { Device, FeatureInfo, WheelSettings } from "$lib/types";
 
   interface Props {
     device: Device;
@@ -26,6 +27,51 @@
       label: hz >= 1000 ? `${hz / 1000}K` : `${hz}`,
     })),
   );
+
+  // -- wheels: centre calibration and the force-feedback driver ---------------
+  type CalStep = "idle" | "start" | "finish";
+  let calStep = $state<CalStep>("idle");
+  let calError = $state<string | null>(null);
+  let calibrating = $state(false);
+  let wheelSettings = $state<WheelSettings | null>(null);
+  const CAL_MAX_DEG = 10;
+
+  $effect(() => {
+    if (!device.capabilities.wheel) return;
+    api.getWheelSettings(device.id).then((s) => (wheelSettings = s)).catch(() => {});
+  });
+
+  async function calibrate() {
+    calibrating = true;
+    calError = null;
+    try {
+      wheelSettings = await api.calibrateWheelCenter(device.id, CAL_MAX_DEG);
+      calStep = "finish";
+    } catch (e) {
+      calError = api.errorMessage(e);
+    } finally {
+      calibrating = false;
+    }
+  }
+
+  async function resetCenter() {
+    try {
+      wheelSettings = await api.resetWheelCenter(device.id);
+      ui.toast("Centre offset cleared.", "success", 2500);
+    } catch (e) {
+      ui.toast(api.errorMessage(e), "error");
+    }
+  }
+
+  async function toggleDriver(enabled: boolean) {
+    try {
+      configStore.apply(await api.setWheelDriver(enabled));
+      await deviceStore.refreshDevice(device.id).catch(() => {});
+      ui.toast(enabled ? "Force-feedback driver started." : "Force-feedback driver stopped.", "success", 2500);
+    } catch (e) {
+      ui.toast(api.errorMessage(e), "error", 7000);
+    }
+  }
 
   async function loadFeatures() {
     loadingFeatures = true;
@@ -143,6 +189,43 @@
     </ul>
   </section>
 
+  {#if device.capabilities.wheel}
+    <section class="card panel">
+      <h2 class="section-title">Wheel center</h2>
+      <p class="none">
+        Use the calibrate function to reset the center position of your wheel if it is slightly
+        off center.
+      </p>
+      <div class="wheel-actions">
+        <button class="cal" onclick={() => { calStep = "start"; calError = null; }}>
+          Calibrate wheel center position
+        </button>
+        {#if wheelSettings?.centerOffset}
+          <button class="ghost" onclick={resetCenter}>
+            Clear offset ({(wheelSettings.centerOffset / 32768 * (wheelSettings.rangeDeg / 2)).toFixed(1)}°)
+          </button>
+        {/if}
+      </div>
+    </section>
+
+    <section class="card panel">
+      <h2 class="section-title">Force feedback driver</h2>
+      <p class="none">
+        OpenGHub provides force feedback to games itself: a virtual wheel on <code>uinput</code>
+        receives the effects games upload and drives the real wheel. No kernel module needed.
+        Status: <strong>{device.wheel?.driverRunning ? "running" : "stopped"}</strong>.
+      </p>
+      <label class="check">
+        <input
+          type="checkbox"
+          checked={configStore.settings.wheelDriver ?? true}
+          onchange={(e) => toggleDriver(e.currentTarget.checked)}
+        />
+        <span>Enable the force-feedback driver</span>
+      </label>
+    </section>
+  {/if}
+
   <section class="card panel wide">
     <div class="panel-head">
       <h2 class="section-title">HID++ features</h2>
@@ -185,7 +268,119 @@
 </div>
 </div>
 
+{#if calStep !== "idle"}
+  <div class="scrim" role="presentation" onclick={(e) => e.target === e.currentTarget && (calStep = "idle")}>
+    <div class="dialog" role="dialog" aria-modal="true">
+      {#if calStep === "start"}
+        <Icon name="alert" size={30} strokeWidth={1.5} />
+        <h3>Set current wheel position as center?</h3>
+        <p>
+          Hold the wheel in the desired center position, and press Calibrate to set it as the
+          new center position of the wheel.
+          <br /><br />
+          NOTE - The maximum offset that you can apply to the center position is ±{CAL_MAX_DEG}
+          degrees.
+        </p>
+        {#if calError}
+          <p class="cal-error">{calError}</p>
+        {/if}
+        <div class="dialog-actions">
+          <button class="ghost" onclick={() => (calStep = "idle")}>Cancel</button>
+          <button class="cal" onclick={calibrate} disabled={calibrating}>{calibrating ? "Calibrating…" : "Calibrate"}</button>
+        </div>
+      {:else}
+        <Icon name="check" size={30} strokeWidth={1.8} />
+        <h3>Your wheel's center position is now set.</h3>
+        <p>Finish or Recalibrate the wheel's center position.</p>
+        <div class="dialog-actions">
+          <button class="ghost" onclick={() => (calStep = "start")}>Recalibrate</button>
+          <button class="cal" onclick={() => (calStep = "idle")}>Finish</button>
+        </div>
+      {/if}
+    </div>
+  </div>
+{/if}
+
 <style>
+  .wheel-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .cal {
+    padding: 9px 16px;
+    border-radius: 4px;
+    background: var(--cyan);
+    font-family: var(--font);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #fff;
+  }
+
+  .cal:disabled {
+    opacity: 0.6;
+  }
+
+  .check {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+
+  .check input {
+    width: 14px;
+    height: 14px;
+    accent-color: var(--accent);
+  }
+
+  .scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    display: grid;
+    place-items: center;
+    background: rgba(0, 0, 0, 0.65);
+  }
+
+  .dialog {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    width: 420px;
+    padding: 28px 28px 22px;
+    border-radius: 8px;
+    background: var(--surface);
+    text-align: center;
+    color: var(--text);
+  }
+
+  .dialog h3 {
+    font-size: 16px;
+    font-weight: 700;
+  }
+
+  .dialog p {
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-dim);
+  }
+
+  .cal-error {
+    color: var(--warning) !important;
+  }
+
+  .dialog-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 6px;
+  }
+
   .settings-scroll {
     flex: 1;
     width: 100%;

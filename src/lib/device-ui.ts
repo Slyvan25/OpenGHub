@@ -99,7 +99,7 @@ export function zoneGlowsFor(
   });
 }
 
-export type TabId = "sensitivity" | "assignments" | "lighting" | "settings";
+export type TabId = "sensitivity" | "assignments" | "lighting" | "wheel" | "settings";
 
 /**
  * The tabs a device can actually drive, in G HUB's rail order for a mouse:
@@ -107,6 +107,13 @@ export type TabId = "sensitivity" | "assignments" | "lighting" | "settings";
  */
 export function tabsFor(device: Device): { id: TabId; label: string; icon: IconName }[] {
   const tabs: { id: TabId; label: string; icon: IconName }[] = [];
+  if (device.capabilities.wheel) {
+    // G HUB's wheel rail: assignments, then the wheel page.
+    tabs.push({ id: "assignments", label: "Assignments", icon: "assignments" });
+    tabs.push({ id: "wheel", label: "Steering Wheel", icon: "wheel" });
+    tabs.push({ id: "settings", label: "Settings", icon: "gear" });
+    return tabs;
+  }
   if (device.capabilities.dpi) {
     tabs.push({ id: "sensitivity", label: "Sensitivity", icon: "dpi" });
   }
@@ -121,5 +128,6 @@ export function tabsFor(device: Device): { id: TabId; label: string; icon: IconN
 }
 
 export function defaultTab(device: Device): TabId {
+  if (device.capabilities.wheel) return "wheel";
   return tabsFor(device)[0].id;
 }

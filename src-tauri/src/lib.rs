@@ -10,6 +10,7 @@ pub mod games;
 pub mod hidpp;
 pub mod profiles;
 pub mod state;
+pub mod wheel;
 
 use std::time::Duration;
 
@@ -46,6 +47,8 @@ pub fn run() {
             spawn_artwork_fetch(handle.clone(), devices);
 
             build_tray(app)?;
+            apply_wheel_profiles(&handle);
+            spawn_wheel_telemetry(handle.clone());
             spawn_battery_poller(handle.clone());
             spawn_application_watcher(handle);
             Ok(())
@@ -76,6 +79,13 @@ pub fn run() {
             commands::preview_community_profile,
             commands::import_community_profile,
             commands::export_profile,
+            commands::get_wheel_state,
+            commands::get_wheel_settings,
+            commands::set_wheel_settings,
+            commands::set_wheel_leds,
+            commands::calibrate_wheel_center,
+            commands::reset_wheel_center,
+            commands::set_wheel_driver,
             commands::get_games,
             commands::launch_game,
             commands::add_manual_game,
@@ -238,11 +248,65 @@ fn spawn_application_watcher(app: tauri::AppHandle) {
                     log::info!("switching to profile '{}'", profile.name);
                     let id = profile.id.clone();
                     let _ = store.update(|c| c.active_profile = id);
-                    let _ = app.emit("config-changed", store.get());
+                    let _ = app.emit(commands::EVENT_CONFIG_CHANGED, store.get());
+                    apply_wheel_profiles(&app);
                 }
             }
         }
     });
+}
+
+/// Pushes the active profile's wheel settings to every connected wheel and
+/// starts the force-feedback driver when it is enabled. Called after every
+/// rescan and profile switch, so a wheel always runs what the profile says.
+pub fn apply_wheel_profiles(app: &tauri::AppHandle) {
+    let manager = app.state::<DeviceManager>();
+    let store = app.state::<Store>();
+    let cfg = store.get();
+    for id in manager.wheel_ids() {
+        let settings = cfg
+            .profiles
+            .iter()
+            .find(|p| p.id == cfg.active_profile)
+            .and_then(|p| p.devices.get(&id))
+            .and_then(|d| d.wheel.clone())
+            .unwrap_or_default();
+        if let Err(e) = manager.apply_wheel_settings(&id, &settings) {
+            log::warn!("wheel {id}: settings not applied: {e}");
+        }
+        let was_running = manager.snapshot(&id).and_then(|s| s.wheel).map(|w| w.driver_running).unwrap_or(false);
+        match manager.set_wheel_driver(&id, cfg.settings.wheel_driver) {
+            Ok(true) if !was_running => log::info!("wheel {id}: force-feedback driver running"),
+            Ok(_) => {}
+            Err(e) => log::warn!("wheel {id}: force-feedback driver not started: {e}"),
+        }
+    }
+}
+
+/// Streams wheel inputs (steering, pedals, buttons) to the frontend at ~30 Hz
+/// while they change, for the Steering Wheel page's live gauge.
+fn spawn_wheel_telemetry(app: tauri::AppHandle) {
+    std::thread::Builder::new()
+        .name("wheel-telemetry".into())
+        .spawn(move || {
+            let mut last: std::collections::HashMap<String, wheel::WheelState> = Default::default();
+            loop {
+                std::thread::sleep(Duration::from_millis(33));
+                let manager = app.state::<DeviceManager>();
+                for id in manager.wheel_ids() {
+                    let Ok(state) = manager.wheel_state(&id) else { continue };
+                    if last.get(&id) == Some(&state) {
+                        continue;
+                    }
+                    last.insert(id.clone(), state);
+                    let _ = app.emit(
+                        commands::EVENT_WHEEL_STATE,
+                        commands::WheelStateEvent { device_id: id, state },
+                    );
+                }
+            }
+        })
+        .expect("telemetry thread");
 }
 
 /// Background worker that polls battery-backed devices and pushes the result to

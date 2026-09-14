@@ -5,6 +5,7 @@
   import DeviceSettings from "$lib/views/DeviceSettings.svelte";
   import Lighting from "$lib/views/Lighting.svelte";
   import Sensitivity from "$lib/views/Sensitivity.svelte";
+  import SteeringWheel from "$lib/views/SteeringWheel.svelte";
 
   const device = $derived(deviceStore.get(page.params.id!));
   const tab = $derived(page.params.tab);
@@ -18,6 +19,8 @@
       <Assignments {device} />
     {:else if tab === "lighting"}
       <Lighting {device} />
+    {:else if tab === "wheel"}
+      <SteeringWheel {device} />
     {:else}
       <DeviceSettings {device} />
     {/if}

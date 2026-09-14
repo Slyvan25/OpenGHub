@@ -19,6 +19,8 @@ pub const EVENT_DEVICES: &str = "devices-changed";
 pub const EVENT_BATTERY: &str = "battery-update";
 /// Emitted when a device state changes as a result of a write.
 pub const EVENT_DEVICE_UPDATED: &str = "device-updated";
+/// Emitted with the full config whenever the backend changes it itself.
+pub const EVENT_CONFIG_CHANGED: &str = "config-changed";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -68,6 +70,7 @@ pub async fn get_connected_devices(
     };
     let payload = DeviceListPayload::build(&manager, devices);
     let _ = app.emit(EVENT_DEVICES, &payload);
+    crate::apply_wheel_profiles(&app);
     // Newly connected devices get their render fetched in the background.
     crate::spawn_artwork_fetch(app, payload.devices.clone());
     Ok(payload)
@@ -296,12 +299,13 @@ pub async fn save_config(store: State<'_, Store>, config: Config) -> Result<Conf
 }
 
 #[tauri::command]
-pub async fn set_active_profile(store: State<'_, Store>, profile_id: String) -> Result<Config> {
+pub async fn set_active_profile(app: AppHandle, store: State<'_, Store>, profile_id: String) -> Result<Config> {
     store.update(|cfg| {
         if cfg.profiles.iter().any(|p| p.id == profile_id) {
             cfg.active_profile = profile_id;
         }
     })?;
+    crate::apply_wheel_profiles(&app);
     Ok(store.get())
 }
 
@@ -470,6 +474,120 @@ pub async fn bind_profile_application(
             }
         }
     })?;
+    Ok(store.get())
+}
+
+// ---------------------------------------------------------------------------
+// Steering wheels
+// ---------------------------------------------------------------------------
+
+use crate::wheel::{WheelSettings, WheelState};
+
+/// Emitted ~30× per second while a wheel moves: `{ deviceId, state }`.
+pub const EVENT_WHEEL_STATE: &str = "wheel-state";
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WheelStateEvent {
+    pub device_id: String,
+    pub state: WheelState,
+}
+
+#[tauri::command]
+pub async fn get_wheel_state(manager: State<'_, DeviceManager>, device_id: String) -> Result<WheelState> {
+    manager.wheel_state(&device_id)
+}
+
+#[tauri::command]
+pub async fn get_wheel_settings(manager: State<'_, DeviceManager>, device_id: String) -> Result<WheelSettings> {
+    manager.wheel_settings(&device_id)
+}
+
+/// Writes the settings to the wheel and stores them in the active profile.
+#[tauri::command]
+pub async fn set_wheel_settings(
+    app: AppHandle,
+    manager: State<'_, DeviceManager>,
+    store: State<'_, Store>,
+    device_id: String,
+    settings: WheelSettings,
+) -> Result<WheelSettings> {
+    let applied = manager.apply_wheel_settings(&device_id, &settings)?;
+    let profile_id = store.get().active_profile;
+    store.update(|cfg| {
+        if let Some(p) = cfg.profiles.iter_mut().find(|p| p.id == profile_id) {
+            let dp = p.devices.entry(device_id.clone()).or_default();
+            dp.wheel = Some(applied.clone());
+        }
+    })?;
+    let _ = app.emit(EVENT_CONFIG_CHANGED, store.get());
+    emit_device_update(&app, &manager, &device_id);
+    Ok(applied)
+}
+
+#[tauri::command]
+pub async fn set_wheel_leds(manager: State<'_, DeviceManager>, device_id: String, mask: u8) -> Result<()> {
+    manager.set_wheel_leds(&device_id, mask)
+}
+
+/// G HUB's "Calibrate wheel center position": the current position becomes
+/// the centre (software offset, ±`max_degrees`), stored in the active profile.
+#[tauri::command]
+pub async fn calibrate_wheel_center(
+    app: AppHandle,
+    manager: State<'_, DeviceManager>,
+    store: State<'_, Store>,
+    device_id: String,
+    max_degrees: Option<f32>,
+) -> Result<WheelSettings> {
+    manager.calibrate_wheel_center(&device_id, max_degrees.unwrap_or(10.0))?;
+    let settings = manager.wheel_settings(&device_id)?;
+    let profile_id = store.get().active_profile;
+    store.update(|cfg| {
+        if let Some(p) = cfg.profiles.iter_mut().find(|p| p.id == profile_id) {
+            let dp = p.devices.entry(device_id.clone()).or_default();
+            dp.wheel = Some(settings.clone());
+        }
+    })?;
+    let _ = app.emit(EVENT_CONFIG_CHANGED, store.get());
+    Ok(settings)
+}
+
+/// Clears the software centre offset.
+#[tauri::command]
+pub async fn reset_wheel_center(
+    app: AppHandle,
+    manager: State<'_, DeviceManager>,
+    store: State<'_, Store>,
+    device_id: String,
+) -> Result<WheelSettings> {
+    let mut settings = manager.wheel_settings(&device_id)?;
+    settings.center_offset = 0;
+    let applied = manager.apply_wheel_settings(&device_id, &settings)?;
+    let profile_id = store.get().active_profile;
+    store.update(|cfg| {
+        if let Some(p) = cfg.profiles.iter_mut().find(|p| p.id == profile_id) {
+            let dp = p.devices.entry(device_id.clone()).or_default();
+            dp.wheel = Some(applied.clone());
+        }
+    })?;
+    let _ = app.emit(EVENT_CONFIG_CHANGED, store.get());
+    Ok(applied)
+}
+
+/// Starts or stops the userspace force-feedback driver and remembers the choice.
+#[tauri::command]
+pub async fn set_wheel_driver(
+    app: AppHandle,
+    manager: State<'_, DeviceManager>,
+    store: State<'_, Store>,
+    enabled: bool,
+) -> Result<Config> {
+    store.update(|cfg| cfg.settings.wheel_driver = enabled)?;
+    for id in manager.wheel_ids() {
+        manager.set_wheel_driver(&id, enabled)?;
+        emit_device_update(&app, &manager, &id);
+    }
     Ok(store.get())
 }
 

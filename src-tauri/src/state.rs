@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::hidpp::features::{self, BatteryState, DpiState, ReportRateState};
 use crate::hidpp::registry::{self, DeviceKind};
+use crate::wheel::{self, WheelHandle, WheelSettings, WheelState};
 use crate::hidpp::{self, DeviceAddress, Error, Handle, Result, RECEIVER_CHILD_INDICES};
 
 /// How the device is attached, which is what the card's status row shows.
@@ -30,6 +31,24 @@ pub struct Capabilities {
     pub battery: bool,
     pub lighting: bool,
     pub onboard_memory: bool,
+    /// A racing wheel driven through the classic command channel.
+    #[serde(default)]
+    pub wheel: bool,
+}
+
+/// Static facts about a wheel, for the Steering Wheel page.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WheelInfo {
+    pub range_min: u16,
+    pub range_max: u16,
+    pub rpm_leds: u8,
+    pub protocol: String,
+    /// The userspace force-feedback driver is running for this wheel.
+    pub driver_running: bool,
+    /// Whether the wheel's own centre calibration (HID++ 0x812c) exists; the
+    /// classic wheels get a software offset instead.
+    pub hardware_calibration: bool,
 }
 
 /// The full per-device payload sent over IPC.
@@ -53,6 +72,8 @@ pub struct DeviceSnapshot {
     pub dpi: Option<DpiState>,
     pub report_rate: Option<ReportRateState>,
     pub lighting_zones: u8,
+    #[serde(default)]
+    pub wheel: Option<WheelInfo>,
     pub protocol_version: String,
     /// Set when this entry is synthesised rather than backed by real hardware.
     pub demo: bool,
@@ -77,10 +98,41 @@ impl DeviceSnapshot {
             dpi: None,
             report_rate: None,
             lighting_zones: 0,
+            wheel: None,
             protocol_version: String::new(),
             demo: false,
             last_error: None,
         }
+    }
+
+    /// A classic wheel, which has no HID++ address to derive an id from.
+    fn wheel_placeholder(handle: &WheelHandle, hid_product: Option<String>) -> Self {
+        let mut snap = DeviceSnapshot::placeholder(
+            &DeviceAddress {
+                path: handle.path.clone(),
+                vendor_id: crate::hidpp::LOGITECH_VID,
+                product_id: handle.model.product_id,
+                device_index: hidpp::DEVICE_INDEX_WIRED,
+            },
+            hid_product.unwrap_or_else(|| handle.model.name.to_string()),
+            DeviceKind::Wheel,
+        );
+        snap.id = handle.id();
+        snap.name = handle.model.name.to_string();
+        snap.serial = handle.serial.clone();
+        snap.model_ids = vec![handle.model.product_id];
+        snap.online = true;
+        snap.capabilities.wheel = true;
+        snap.protocol_version = "classic".into();
+        snap.wheel = Some(WheelInfo {
+            range_min: handle.model.range.0,
+            range_max: handle.model.range.1,
+            rpm_leds: handle.model.rpm_leds,
+            protocol: format!("{:?}", handle.model.protocol),
+            driver_running: handle.bridge_running(),
+            hardware_calibration: false,
+        });
+        snap
     }
 }
 
@@ -111,6 +163,8 @@ pub struct DeviceManager {
 struct Inner {
     api: Option<HidApi>,
     handles: HashMap<String, Handle>,
+    /// Classic wheels, keyed like `snapshots`.
+    wheels: HashMap<String, WheelHandle>,
     snapshots: HashMap<String, DeviceSnapshot>,
     order: Vec<String>,
     /// True when we are showing synthetic devices because no real ones were found.
@@ -138,6 +192,7 @@ impl DeviceManager {
             inner: Mutex::new(Inner {
                 api,
                 handles: HashMap::new(),
+                wheels: HashMap::new(),
                 snapshots: HashMap::new(),
                 order: Vec::new(),
                 demo: false,
@@ -248,6 +303,88 @@ impl DeviceManager {
     }
 
     /// Applies a DPI change, updating the cached snapshot on success.
+    // -- wheels ---------------------------------------------------------------
+
+    fn with_wheel<T>(&self, id: &str, f: impl FnOnce(&mut WheelHandle) -> Result<T>) -> Result<T> {
+        let mut inner = self.inner.lock();
+        let handle = inner.wheels.get_mut(id).ok_or(Error::NotConnected)?;
+        f(handle)
+    }
+
+    pub fn is_wheel(&self, id: &str) -> bool {
+        self.inner.lock().wheels.contains_key(id)
+    }
+
+    /// Latest input state of a wheel (polled here unless the driver runs).
+    pub fn wheel_state(&self, id: &str) -> Result<WheelState> {
+        self.with_wheel(id, |w| {
+            if !w.bridge_running() {
+                w.poll();
+            }
+            Ok(*w.state.lock())
+        })
+    }
+
+    pub fn wheel_settings(&self, id: &str) -> Result<WheelSettings> {
+        self.with_wheel(id, |w| Ok(w.settings.lock().clone()))
+    }
+
+    /// Writes a settings block to the wheel; returns it with the range clamped.
+    pub fn apply_wheel_settings(&self, id: &str, settings: &WheelSettings) -> Result<WheelSettings> {
+        self.with_wheel(id, |w| {
+            w.apply(settings)?;
+            Ok(w.settings.lock().clone())
+        })
+    }
+
+    pub fn set_wheel_leds(&self, id: &str, mask: u8) -> Result<()> {
+        self.with_wheel(id, |w| w.set_leds(mask))
+    }
+
+    /// G HUB's "calibrate wheel centre": the current position becomes centre.
+    /// Returns the new raw offset; refused beyond `max_degrees` from the
+    /// wheel's own centre, like G HUB's restricted calibration.
+    pub fn calibrate_wheel_center(&self, id: &str, max_degrees: f32) -> Result<i16> {
+        self.with_wheel(id, |w| {
+            if !w.bridge_running() {
+                w.poll();
+            }
+            let raw = w.state.lock().steering_raw as i32;
+            let offset = raw - 32768;
+            let range = w.settings.lock().range_deg as f32;
+            let degrees = offset as f32 / 32768.0 * range / 2.0;
+            if degrees.abs() > max_degrees {
+                return Err(Error::other(format!(
+                    "the wheel is {degrees:.1}° from centre; calibration allows at most ±{max_degrees:.0}°"
+                )));
+            }
+            w.settings.lock().center_offset = offset.clamp(-32768, 32767) as i16;
+            Ok(offset as i16)
+        })
+    }
+
+    /// Starts or stops the userspace force-feedback driver for a wheel.
+    pub fn set_wheel_driver(&self, id: &str, enabled: bool) -> Result<bool> {
+        let mut inner = self.inner.lock();
+        let handle = inner.wheels.get_mut(id).ok_or(Error::NotConnected)?;
+        if enabled && !handle.bridge_running() {
+            let grabs = wheel_evdev_nodes(&handle.path);
+            handle.start_bridge(grabs)?;
+        } else if !enabled && handle.bridge_running() {
+            handle.stop_bridge();
+        }
+        let running = handle.bridge_running();
+        if let Some(info) = inner.snapshots.get_mut(id).and_then(|s| s.wheel.as_mut()) {
+            info.driver_running = running;
+        }
+        Ok(running)
+    }
+
+    /// Ids of every connected wheel.
+    pub fn wheel_ids(&self) -> Vec<String> {
+        self.inner.lock().wheels.keys().cloned().collect()
+    }
+
     pub fn set_dpi(&self, id: &str, dpi: u16) -> Result<DpiState> {
         let mut inner = self.inner.lock();
         if inner.demo {
@@ -440,7 +577,7 @@ impl Inner {
         }
 
         let endpoints = hidpp::enumerate(api);
-        let found_endpoints = !endpoints.is_empty();
+        let found_endpoints = !endpoints.is_empty() || !wheel::enumerate(api).is_empty();
         // Names of devices we could see but not open, so the UI can name them.
         let mut unopenable: Vec<String> = Vec::new();
         let mut seen: Vec<String> = Vec::new();
@@ -499,8 +636,40 @@ impl Inner {
             }
         }
 
+        // Classic wheels: no HID++, no ping — open the joystick interface.
+        for endpoint in wheel::enumerate(api) {
+            let id = format!("046d:{:04x}:wheel", endpoint.model.product_id);
+            if !self.wheels.contains_key(&id) {
+                match WheelHandle::open(api, &endpoint) {
+                    Ok(h) => {
+                        log::info!("wheel {} on {}", endpoint.model.name, endpoint.path);
+                        self.wheels.insert(id.clone(), h);
+                    }
+                    Err(err) => {
+                        log::debug!("cannot open wheel {}: {err}", endpoint.path);
+                        let label = endpoint.hid_product.clone().unwrap_or_else(|| endpoint.model.name.to_string());
+                        if !unopenable.contains(&label) {
+                            unopenable.push(label);
+                        }
+                        continue;
+                    }
+                }
+            }
+            let handle = &self.wheels[&id];
+            let mut snapshot = self
+                .snapshots
+                .remove(&id)
+                .unwrap_or_else(|| DeviceSnapshot::wheel_placeholder(handle, endpoint.hid_product.clone()));
+            if let Some(info) = snapshot.wheel.as_mut() {
+                info.driver_running = handle.bridge_running();
+            }
+            self.snapshots.insert(id.clone(), snapshot);
+            seen.push(id);
+        }
+
         // Drop anything that disappeared, preserving the order of what remains.
         self.handles.retain(|id, _| seen.contains(id));
+        self.wheels.retain(|id, _| seen.contains(id));
         self.snapshots.retain(|id, _| seen.contains(id));
         self.order = seen;
 
@@ -594,6 +763,29 @@ impl Inner {
 }
 
 /// Fills in everything about a device: identity first, then live state.
+/// The evdev nodes the kernel created for the HID interface behind a hidraw
+/// path (`/dev/hidrawN` → `/sys/class/hidraw/hidrawN/device/input/*/event*`).
+fn wheel_evdev_nodes(hidraw_path: &str) -> Vec<String> {
+    let Some(node) = std::path::Path::new(hidraw_path).file_name().and_then(|n| n.to_str()) else {
+        return vec![];
+    };
+    let input_dir = std::path::PathBuf::from("/sys/class/hidraw").join(node).join("device/input");
+    let mut out = Vec::new();
+    if let Ok(inputs) = std::fs::read_dir(&input_dir) {
+        for input in inputs.flatten() {
+            if let Ok(entries) = std::fs::read_dir(input.path()) {
+                for e in entries.flatten() {
+                    let name = e.file_name().to_string_lossy().into_owned();
+                    if name.starts_with("event") {
+                        out.push(format!("/dev/input/{name}"));
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
 fn probe(handle: &mut Handle, snapshot: &mut DeviceSnapshot, endpoint: &hidpp::Endpoint) {
     snapshot.model_ids = features::read_model_ids(handle).unwrap_or_default();
 
@@ -656,6 +848,7 @@ fn probe(handle: &mut Handle, snapshot: &mut DeviceSnapshot, endpoint: &hidpp::E
         lighting: handle.supports(features::lighting::ID_COLOR_LED_EFFECTS)
             || handle.supports(features::lighting::ID_RGB_EFFECTS),
         onboard_memory: handle.supports(0x8100),
+        wheel: false,
     };
 
     read_dynamic_state(handle, snapshot);

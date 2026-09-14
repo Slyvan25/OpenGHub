@@ -22,7 +22,7 @@
   let search = $state("");
   /** Sections expanded with VIEW ALL. */
   let expanded = $state<Record<string, boolean>>({});
-  let rows: Record<string, HTMLDivElement> = {};
+  let rows = $state<Record<string, HTMLDivElement>>({});
 
   const myIds = $derived(new Set(deviceStore.devices.flatMap((d) => artworkIds(d))));
 

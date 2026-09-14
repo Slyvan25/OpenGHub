@@ -60,7 +60,7 @@ fn is_artwork_key(key: &str) -> bool {
     }
     match key.split_once('-') {
         None => true,
-        Some((_, "side")) | Some((_, "thumb")) => true,
+        Some((_, "side")) | Some((_, "thumb")) | Some((_, "base")) => true,
         Some((_, rest)) => rest
             .strip_prefix("zone")
             .map(|z| !z.is_empty() && z.chars().all(|c| c.is_ascii_digit()))
@@ -119,6 +119,7 @@ pub fn scan() -> HashMap<String, PathBuf> {
             let product = product.rsplit('_').next().unwrap_or(product);
             let suffix_ok = suffix == "side"
                 || suffix == "thumb"
+                || suffix == "base"
                 || suffix.strip_prefix("zone").map(|z| !z.is_empty() && z.chars().all(|c| c.is_ascii_digit())).unwrap_or(false);
             if !suffix_ok {
                 continue;

@@ -13,6 +13,7 @@ const EMPTY_DEVICE_PROFILE: DeviceProfile = {
   zoneNames: [],
   assignments: [],
   macros: [],
+  wheel: null,
 };
 
 class ConfigStore {

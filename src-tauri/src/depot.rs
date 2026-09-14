@@ -631,6 +631,8 @@ pub fn import_device_files(
     // The manifest names the resources; fall back to the conventional names.
     let mut front = "front.png".to_string();
     let mut side = "side.png".to_string();
+    // Wheels ship the rim (`wheel_image_front`) over a static base.
+    let mut base: Option<String> = None;
     let mut metadata = "metadata.json".to_string();
     if let Some(manifest) = get("manifest.json") {
         if let Ok(m) = serde_json::from_slice::<serde_json::Value>(manifest) {
@@ -643,6 +645,7 @@ pub fn import_device_files(
                     match (r.get("key").and_then(|v| v.as_str()), r.get("src").and_then(|v| v.as_str())) {
                         (Some("device_image"), Some(src)) => front = src.to_string(),
                         (Some("device_side"), Some(src)) => side = src.to_string(),
+                        (Some("wheel_image_base"), Some(src)) => base = Some(src.to_string()),
                         (Some("image_metadata"), Some(src)) => metadata = src.to_string(),
                         _ => {}
                     }
@@ -651,10 +654,25 @@ pub fn import_device_files(
         }
     }
 
+    // Wheel depots use a different metadata schema (zoom regions and slot
+    // markers); no layout is not a failure.
     let layout = match get(&metadata) {
-        Some(bytes) => Some(parse_metadata(bytes, &def.model_id, &def.display_name, &def.zone_type_map)?),
+        Some(bytes) => match parse_metadata(bytes, &def.model_id, &def.display_name, &def.zone_type_map) {
+            Ok(l) => Some(l),
+            Err(e) => {
+                log::info!("{}: no zone layout in metadata ({e})", def.display_name);
+                None
+            }
+        },
         None => None,
     };
+    /// Keeps the source's image format: the wheels ship WebP.
+    fn ext_of(name: &str) -> &str {
+        match name.rsplit('.').next() {
+            Some(e) if matches!(e, "png" | "webp" | "jpg" | "jpeg") => e,
+            _ => "png",
+        }
+    }
 
     let mut views = Vec::new();
     for pid in &def.product_ids {
@@ -665,15 +683,20 @@ pub fn import_device_files(
                 .map_err(|e| Error::other(format!("could not write {}: {e}", path.display())))
         };
         if let Some(png) = get(&front) {
-            write(".png", png)?;
+            write(&format!(".{}", ext_of(&front)), png)?;
             if !views.contains(&"front".to_string()) {
                 views.push("front".into());
             }
         }
         if let Some(png) = get(&side) {
-            write("-side.png", png)?;
+            write(&format!("-side.{}", ext_of(&side)), png)?;
             if !views.contains(&"side".to_string()) {
                 views.push("side".into());
+            }
+        }
+        if let Some(name) = &base {
+            if let Some(img) = get(name) {
+                write(&format!("-base.{}", ext_of(name)), img)?;
             }
         }
         if let Some(png) = thumbnail {
@@ -776,10 +799,31 @@ pub fn load_cache() -> Result<(Depository, Vec<DeviceDef>), Error> {
     Ok((depository, defs))
 }
 
+/// Devices whose definitions sit in the encrypted part of G HUB's device
+/// database. Their depots are public like every other device depot; only the
+/// mapping from product id to depot name had to be read off the depository.
+pub fn builtin_defs() -> Vec<DeviceDef> {
+    let wheel = |model: &str, name: &str, depot: &str, pids: &[u16]| DeviceDef {
+        model_id: model.into(),
+        display_name: name.into(),
+        depot: depot.into(),
+        slot_prefix: model.replace('_', "-"),
+        kind: "wheel".into(),
+        thumbnail: String::new(),
+        product_ids: pids.to_vec(),
+        zone_type_map: Default::default(),
+    };
+    vec![
+        wheel("g923_ps4", "G923 Racing Wheel", "g923_ps4", &[0xc267, 0xc266]),
+        wheel("g923_xbox", "G923 Racing Wheel", "g923_xbox", &[0xc26e, 0xc26d]),
+    ]
+}
+
 /// Fetches and imports the depot for a device, found by any of its product ids.
 /// This is what G HUB does when it first sees a device.
 pub fn fetch_for_product_ids(product_ids: &[u16]) -> Result<ImportedDevice, Error> {
-    let (depository, defs) = load_cache()?;
+    let (depository, mut defs) = load_cache()?;
+    defs.extend(builtin_defs());
     let def = defs
         .iter()
         .find(|d| d.product_ids.iter().any(|p| product_ids.contains(p)))

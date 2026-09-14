@@ -27,6 +27,8 @@ import type {
   CommunityIndex,
   SharedProfile,
   Game,
+  WheelState,
+  WheelSettings,
 } from "./types";
 
 export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -60,6 +62,7 @@ export const events = {
   activeApplication: "active-application",
   configChanged: "config-changed",
   artworkChanged: "artwork-changed",
+  wheelState: "wheel-state",
 } as const;
 
 // -- devices ---------------------------------------------------------------
@@ -148,6 +151,21 @@ export const getDeviceProfile = (deviceId: string) =>
   call<DeviceProfile>("get_device_profile", { deviceId });
 export const saveSettings = (settings: Settings) => call<Config>("save_settings", { settings });
 export const getConfigPath = () => call<string>("get_config_path");
+
+// -- steering wheels -------------------------------------------------------
+
+export const getWheelState = (deviceId: string) => call<WheelState>("get_wheel_state", { deviceId });
+export const getWheelSettings = (deviceId: string) =>
+  call<WheelSettings>("get_wheel_settings", { deviceId });
+export const setWheelSettings = (deviceId: string, settings: WheelSettings) =>
+  call<WheelSettings>("set_wheel_settings", { deviceId, settings });
+export const setWheelLeds = (deviceId: string, mask: number) =>
+  call<void>("set_wheel_leds", { deviceId, mask });
+export const calibrateWheelCenter = (deviceId: string, maxDegrees = 10) =>
+  call<WheelSettings>("calibrate_wheel_center", { deviceId, maxDegrees });
+export const resetWheelCenter = (deviceId: string) =>
+  call<WheelSettings>("reset_wheel_center", { deviceId });
+export const setWheelDriver = (enabled: boolean) => call<Config>("set_wheel_driver", { enabled });
 
 // -- games library ---------------------------------------------------------
 

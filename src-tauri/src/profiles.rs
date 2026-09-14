@@ -130,6 +130,9 @@ pub struct DeviceProfile {
     /// Recorded macros, referenced by assignments whose category is `macro`.
     #[serde(default)]
     pub macros: Vec<MacroDef>,
+    /// Steering wheel settings, for wheels.
+    #[serde(default)]
+    pub wheel: Option<crate::wheel::WheelSettings>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -195,6 +198,10 @@ pub struct Settings {
     /// Name written into profiles the user shares.
     #[serde(default)]
     pub author_name: String,
+    /// Run the userspace force-feedback driver for classic wheels, so games
+    /// get force feedback without a kernel module.
+    #[serde(default = "default_true")]
+    pub wheel_driver: bool,
 }
 
 fn default_community_repo() -> String {
@@ -224,6 +231,7 @@ impl Default for Settings {
             persistent_profile: "default".into(),
             community_repo: crate::community::DEFAULT_REPO.into(),
             author_name: String::new(),
+            wheel_driver: true,
         }
     }
 }
@@ -364,6 +372,7 @@ mod tests {
                 zone_names: vec![],
                 assignments: vec![],
                 macros: vec![],
+                wheel: None,
             },
         );
         let text = serde_json::to_string(&cfg).unwrap();

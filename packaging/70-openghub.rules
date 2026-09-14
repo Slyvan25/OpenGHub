@@ -20,3 +20,5 @@
 # covers both directly attached devices and anything behind a Unifying /
 # LIGHTSPEED / Bolt receiver, whose hidraw node hangs off the receiver.
 KERNEL=="hidraw*", ATTRS{idVendor}=="046d", TAG+="uaccess"
+# The force-feedback driver for racing wheels creates a virtual wheel on uinput.
+KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node=uinput"

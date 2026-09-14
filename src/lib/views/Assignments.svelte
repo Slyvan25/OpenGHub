@@ -961,6 +961,7 @@
     height: 100%;
     overflow: visible;
     pointer-events: none;
+    z-index: 26;
   }
 
   .lines line {
@@ -982,6 +983,7 @@
     border-radius: 50%;
     background: rgba(0, 0, 0, 0.35);
     transition: transform 120ms var(--ease), border-color 120ms var(--ease);
+    z-index: 27;
   }
 
   .dot:hover {

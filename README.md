@@ -20,6 +20,9 @@ kernel module, no proprietary daemon.
 | Per-game profiles: detection, auto-switch, game command sets | ✅ via Logitech's public application database |
 | Community profiles: browse, preview, import, share | ✅ from an open Git repository ([openghub-community](https://github.com/Slyvan25/openghub-community)) |
 | Games library & launcher | ✅ Steam, Heroic (Epic / GOG), Lutris and manually added executables |
+| Racing wheels: range, centering spring, RPM LEDs, centre calibration | ✅ G923 (PS4/PC), G29, G27, G25, DFGT, DFP, MOMO — classic command channel |
+| Force feedback for games (wheels) | ✅ OpenGHub's own userspace driver on uinput, no kernel module |
+| TrueForce | ✅ works: the game streams it straight to the wheel (confirmed in Assetto Corsa under Proton); G HUB's gain sliders need HID++ `0x8139`, so on PS-mode wheels the in-game TrueForce settings apply |
 | Device renders, thumbnails, exact zone & button geometry | ✅ imported from a G HUB install, or fetched from Logitech's CDN per device |
 | RGB lighting (`0x8070`) | ✅ per zone: off / fixed / breathing / colour cycle |
 | Macros on onboard memory (`0x8100`) | ✅ recorded, written to device flash, backed up first |
@@ -140,6 +143,69 @@ Logitech's application database by Steam app id (or exact name), which is what l
 its profile: *Profile* jumps to it, *Add profile* creates and binds one. Launching goes through
 the owning launcher (`steam://rungameid/…`, `heroic://launch/…`, `lutris:rungame/…`), so
 profile auto-switching then works the usual way. `cargo run --example games` dumps the scan.
+
+### Racing wheels and the built-in force-feedback driver
+
+Verified on a G923 Racing Wheel for PlayStation 4 and PC (046d:c267). Older wheels and the
+G923 in PlayStation mode do **not** speak HID++ — G HUB drives them through a raw-HID class
+(`hidio_g923_ps4`, `hidio_g29`) with the classic 7-byte commands the `new-lg4ff` kernel driver
+documents. OpenGHub sends the same bytes from `src-tauri/src/wheel/`:
+
+| command | bytes |
+| --- | --- |
+| operating range | `f8 81 lo hi` |
+| RPM LEDs (5-bit mask) | `f8 12 mask` |
+| centering spring | `fe 0d k k mag` then `14` (off: `f5`) |
+| force slots 0–3 | see `wheel/ffb.rs` |
+
+On the G923 (PS mode) they travel as output report `0x30` on the joystick interface; native
+wheels use the id-less report. The steering angle is a 16-bit field the kernel doesn't map to
+evdev, so inputs are read from hidraw too (`u16` at bytes 43–44, pedals at 45/47/49).
+
+**Force feedback without a kernel module.** Games upload effects to an event device; only a
+driver can answer. OpenGHub is that driver, in userspace: it creates a virtual wheel on
+`/dev/uinput` with FF capability (`OpenGHub G923 Racing Wheel`), mirrors the real wheel's axes
+and buttons onto it, grabs the real evdev node so games see one wheel, and turns every
+uploaded effect — constant, ramp, periodic, spring, damper, friction, inertia, with envelopes —
+into the wheel's four force slots on a 2 ms tick. The effect engine is a port of new-lg4ff's.
+Sensitivity and the "calibrate wheel centre" offset are applied to the virtual axis, so they
+are real on Linux rather than Windows-driver-only. `/dev/uinput` access comes from the udev
+rule in `packaging/` (Steam's rule grants it too).
+
+TrueForce is different: it is an audio/physics stream that the game's Logitech SDK writes
+straight to the wheel's third HID interface (usage page `0xFFFD`), not through G HUB. Proton
+passes that hidraw interface through, so TrueForce works on Linux — confirmed in Assetto
+Corsa — and OpenGHub's driver leaves that interface alone. What G HUB's Torque / Audio Effects
+sliders do on Windows is scale the stream via HID++ `0x8139`, which the PS-mode G923 does not
+expose; here *Torque* is wired to the driver's force-feedback gain and *Audio Effects* is kept
+per profile, while the game's own TrueForce settings set the stream's strength.
+
+Two hardware gotchas that cost an evening: the wheel must be on **mains power** (unpowered it
+enumerates but resets constantly), and on one of the AMD xHCI controllers here the joystick
+interface's interrupt-OUT endpoint never comes up (`xhci_hcd: WARN urb submitted to disabled
+ep`, every write fails `ENOENT`). Another USB port fixed it; the alternative is
+`options usbhid quirks=0x046d:0xc267:0x00040000` in `/etc/modprobe.d/`, which routes output
+reports over the control endpoint.
+
+**Proton games.** Proton routes Logitech wheels over hidraw by default (that is what lets the
+TrueForce DLL reach the wheel), and drops the SDL duplicate of anything it hidraw-routes — so a
+Proton game sees the raw wheel and not the OpenGHub one. Over hidraw Wine can only do
+DirectInput force feedback for HID *Physical Interface* devices, and the PS-mode G923 has no
+PID descriptor: the game's FF (self-aligning torque, curbs, its gain slider) goes nowhere, and
+what you feel is TrueForce plus OpenGHub's centering spring. Two launch options fix that:
+
+| launch option | result |
+| --- | --- |
+| `PROTON_DISABLE_HIDRAW=0x046d/0xc266 %command%` | the OpenGHub wheel (it presents as the native G923, `c266`) comes through SDL with full FF, the real wheel stays on hidraw for TrueForce — bind axes to *OpenGHub G923 Racing Wheel* |
+| `PROTON_PREFER_SDL=1 %command%` | everything through the OpenGHub driver (calibration and sensitivity apply); no TrueForce |
+
+Keep the game's steer lock equal to OpenGHub's operating range — a game on the hidraw path
+cannot set the wheel's range itself.
+
+G HUB's HID++ wheel features (`0x8123` force feedback, `0x812c` centre calibration, `0x8131`
+spring, `0x8138` range, `0x8139` TrueForce) apply to the G920 / G923 Xbox editions; those are
+recognised but not driven yet. `cargo run --example wheeldrive -- 30` runs the driver
+standalone for testing with `fftest`.
 
 ### Per-game profiles and the application database
 

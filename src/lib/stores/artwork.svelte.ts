@@ -70,6 +70,15 @@ class ArtworkStore {
     return this.forProductIds(productIds);
   }
 
+  /** A wheel's static base, drawn under the rotating rim. */
+  baseFor(productIds: number[]): string | null {
+    for (const id of productIds) {
+      const hit = this.images[`${id.toString(16).padStart(4, "0")}-base`];
+      if (hit) return hit;
+    }
+    return null;
+  }
+
   /** The side view, when the depot shipped one. */
   sideFor(productIds: number[]): string | null {
     for (const id of productIds) {

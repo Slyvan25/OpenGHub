@@ -53,6 +53,42 @@ export interface Capabilities {
   battery: boolean;
   lighting: boolean;
   onboardMemory: boolean;
+  /** A racing wheel driven through the classic command channel. */
+  wheel?: boolean;
+}
+
+/** Static facts about a wheel. */
+export interface WheelInfo {
+  rangeMin: number;
+  rangeMax: number;
+  rpmLeds: number;
+  protocol: string;
+  driverRunning: boolean;
+  hardwareCalibration: boolean;
+}
+
+/** Live wheel input: steering −1..1, pedals 0..1. */
+export interface WheelState {
+  steeringRaw: number;
+  steering: number;
+  accelerator: number;
+  brake: number;
+  clutch: number;
+  buttons: number;
+  hat: number;
+}
+
+/** G HUB's Steering Wheel panel, per profile. */
+export interface WheelSettings {
+  rangeDeg: number;
+  sensitivity: number;
+  centerSpring: number;
+  centerSpringInFfbGames: boolean;
+  ffbGain: number;
+  centerOffset: number;
+  trueforceTorque: number;
+  trueforceAudio: number;
+  trueforceGameControl: boolean;
 }
 
 export interface Device {
@@ -71,6 +107,7 @@ export interface Device {
   dpi: DpiState | null;
   reportRate: ReportRateState | null;
   lightingZones: number;
+  wheel?: WheelInfo | null;
   protocolVersion: string;
   demo: boolean;
   lastError: string | null;
@@ -166,6 +203,8 @@ export interface DeviceProfile {
   assignments: Assignment[];
   /** Recorded macros, referenced by assignments with category `macro`. */
   macros: MacroDef[];
+  /** Steering wheel settings, for wheels. */
+  wheel?: WheelSettings | null;
 }
 
 /** An entry from Logitech's public application database. */
@@ -223,6 +262,8 @@ export interface Settings {
   communityRepo: string;
   /** Name written into shared profiles. */
   authorName: string;
+  /** Run the userspace force-feedback driver for classic wheels. */
+  wheelDriver?: boolean;
 }
 
 // -- community profiles ----------------------------------------------------
