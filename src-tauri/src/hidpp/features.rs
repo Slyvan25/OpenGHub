@@ -117,6 +117,24 @@ pub mod onboard {
 }
 
 // ---------------------------------------------------------------------------
+// 0x8110 Mouse Button Spy — G HUB's software-mode assignments
+// ---------------------------------------------------------------------------
+pub mod button_spy {
+    pub const ID: u16 = 0x8110;
+    pub const FN_GET_NB_OF_BUTTONS: u8 = 0x00;
+    pub const FN_START_SPY: u8 = 0x01;
+    pub const FN_STOP_SPY: u8 = 0x02;
+    pub const FN_GET_REMAPPING: u8 = 0x03;
+    pub const FN_SET_REMAPPING: u8 = 0x04;
+    /// Event 0: a 16-bit big-endian mask of pressed buttons (bit 0 = button 1).
+    pub const EVENT_BUTTON_REPORT: u8 = 0x00;
+    /// Remapping a button to this makes the device send no HID action for it,
+    /// leaving the spy report as the only trace — which is what software
+    /// assignments want.
+    pub const NO_HID_ACTION: u8 = 0x00;
+}
+
+// ---------------------------------------------------------------------------
 // 0x8070 ColorLedEffects / 0x8071 RGBEffects
 // ---------------------------------------------------------------------------
 pub mod lighting {
@@ -502,6 +520,48 @@ pub fn write_report_rate(h: &mut Handle, hz: u32) -> Result<u32> {
         with_host_mode(h, |h| h.call(idx, report_rate::FN_SET, &[period_ms], ReportKind::Short))?;
     }
     Ok(target)
+}
+
+/// Number of physical buttons the spy can report.
+pub fn spy_button_count(h: &mut Handle) -> Result<u8> {
+    let idx = h.feature_index(button_spy::ID)?;
+    Ok(h.call(idx, button_spy::FN_GET_NB_OF_BUTTONS, &[], ReportKind::Short)?.param(0))
+}
+
+/// Starts (or stops) raw button reporting. Verified on a G502 LIGHTSPEED:
+/// reports arrive as long packets, function 0, params `[hi, lo]`.
+pub fn set_spy(h: &mut Handle, on: bool) -> Result<()> {
+    let idx = h.feature_index(button_spy::ID)?;
+    let f = if on { button_spy::FN_START_SPY } else { button_spy::FN_STOP_SPY };
+    h.call(idx, f, &[], ReportKind::Short).map(|_| ())
+}
+
+/// The device's button → HID action table: entry `i` is what physical button
+/// `i + 1` does (its own number = default, 0 = nothing).
+pub fn read_remapping(h: &mut Handle) -> Result<[u8; 16]> {
+    let idx = h.feature_index(button_spy::ID)?;
+    let p = h.call(idx, button_spy::FN_GET_REMAPPING, &[], ReportKind::Long)?;
+    let mut out = [0u8; 16];
+    for (i, b) in p.params.iter().take(16).enumerate() {
+        out[i] = *b;
+    }
+    Ok(out)
+}
+
+pub fn write_remapping(h: &mut Handle, table: &[u8; 16]) -> Result<()> {
+    let idx = h.feature_index(button_spy::ID)?;
+    h.call(idx, button_spy::FN_SET_REMAPPING, table, ReportKind::Long).map(|_| ())
+}
+
+/// Decodes a spy notification into the pressed-button mask, if `packet` is one.
+pub fn spy_event_mask(packet: &crate::hidpp::Packet, spy_index: u8) -> Option<u16> {
+    if packet.feature_index != spy_index
+        || packet.function_id() != button_spy::EVENT_BUTTON_REPORT
+        || !packet.is_notification()
+    {
+        return None;
+    }
+    Some(u16::from_be_bytes([packet.param(0), packet.param(1)]))
 }
 
 /// Reads whether the device is running its onboard profile or is host-driven.

@@ -2,10 +2,10 @@
   /**
    * Assignments — drag a command onto a control, exactly like G HUB.
    *
-   * Bindings are stored in the active profile. Writing them into the device's
-   * own remap table needs HID++ feature `0x1b04` (Special Keys & Buttons), which
-   * this build does not implement yet, so the banner says so rather than
-   * pretending the change reached the hardware.
+   * Bindings are stored in the active profile and pushed to the device right
+   * away: in software mode the mouse reports raw presses (0x8110) and OpenGHub
+   * performs the action; devices with onboard profiles get their button table
+   * written too, so they keep working when the app is closed.
    */
   import { untrack } from "svelte";
   import { page } from "$app/state";
@@ -68,16 +68,32 @@
       items: [
         { category: "command", label: "Go Back", value: "alt+Left", group: "Navigation" },
         { category: "command", label: "Go Forward", value: "alt+Right", group: "Navigation" },
-        { category: "command", label: "Go to Next Folder", value: "super+]", group: "Navigation" },
-        { category: "command", label: "Go to Previous Folder", value: "super+[", group: "Navigation" },
+        { category: "command", label: "Switch Window", value: "alt+Tab", group: "Navigation" },
+        { category: "command", label: "Activities / Launcher", value: "super", group: "Navigation" },
+        { category: "command", label: "Next Workspace", value: "ctrl+alt+Right", group: "Navigation" },
+        { category: "command", label: "Previous Workspace", value: "ctrl+alt+Left", group: "Navigation" },
         { category: "command", label: "Copy", value: "ctrl+c", group: "Editing" },
-        { category: "command", label: "Paste", group: "Editing", value: "ctrl+v" },
-        { category: "command", label: "Cut", group: "Editing", value: "ctrl+x" },
-        { category: "command", label: "Undo", group: "Editing", value: "ctrl+z" },
-        { category: "command", label: "Redo", group: "Editing", value: "ctrl+shift+z" },
-        { category: "command", label: "Select all", group: "Editing", value: "ctrl+a" },
-        { category: "command", label: "Save", group: "Editing", value: "ctrl+s" },
-        { category: "command", label: "Find", group: "Editing", value: "ctrl+f" },
+        { category: "command", label: "Paste", value: "ctrl+v", group: "Editing" },
+        { category: "command", label: "Cut", value: "ctrl+x", group: "Editing" },
+        { category: "command", label: "Undo", value: "ctrl+z", group: "Editing" },
+        { category: "command", label: "Redo", value: "ctrl+shift+z", group: "Editing" },
+        { category: "command", label: "Select All", value: "ctrl+a", group: "Editing" },
+        { category: "command", label: "Save", value: "ctrl+s", group: "Editing" },
+        { category: "command", label: "Find", value: "ctrl+f", group: "Editing" },
+        { category: "command", label: "Close Window", value: "alt+F4", group: "Desktop" },
+        { category: "command", label: "Maximise Window", value: "super+Up", group: "Desktop" },
+        { category: "command", label: "Show Desktop", value: "super+d", group: "Desktop" },
+        { category: "command", label: "Open Terminal", value: "ctrl+alt+t", group: "Desktop" },
+        { category: "command", label: "Lock Screen", value: "super+l", group: "Desktop" },
+        { category: "command", label: "New Tab", value: "ctrl+t", group: "Browser" },
+        { category: "command", label: "Close Tab", value: "ctrl+w", group: "Browser" },
+        { category: "command", label: "Reopen Closed Tab", value: "ctrl+shift+t", group: "Browser" },
+        { category: "command", label: "Next Tab", value: "ctrl+Tab", group: "Browser" },
+        { category: "command", label: "Previous Tab", value: "ctrl+shift+Tab", group: "Browser" },
+        { category: "command", label: "Reload", value: "F5", group: "Browser" },
+        { category: "command", label: "Address Bar", value: "ctrl+l", group: "Browser" },
+        { category: "command", label: "Browser Back", value: "XF86Back", group: "Browser" },
+        { category: "command", label: "Browser Forward", value: "XF86Forward", group: "Browser" },
       ],
     },
     {
@@ -98,6 +114,9 @@
       name: "Actions",
       icon: "sliders",
       items: [
+        { category: "action", label: "Primary Click", value: "mouse-left" },
+        { category: "action", label: "Secondary Click", value: "mouse-right" },
+        { category: "action", label: "Middle Click", value: "mouse-middle" },
         { category: "action", label: "DPI up", value: "dpi-up" },
         { category: "action", label: "DPI down", value: "dpi-down" },
         { category: "action", label: "DPI cycle", value: "dpi-cycle" },
@@ -194,27 +213,54 @@
     return assignments.find((a) => a.control === key);
   }
 
+  /** G HUB refuses to leave a mouse without a primary click. */
+  let primaryDialog = $state<{ control: string } | null>(null);
+
+  function isPrimaryClick(a: Pick<Assignment, "category" | "value">): boolean {
+    return a.category === "action" && a.value === "mouse-left";
+  }
+
+  /** True when, after `next` is applied, some button still fires the primary click. */
+  function keepsPrimary(next: Assignment[]): boolean {
+    if (device.kind !== "mouse") return true;
+    const base = (c: string) => c.split(":")[0];
+    const layer = next.filter((a) => !a.control.includes(":"));
+    const button1 = layer.find((a) => base(a.control) === "button-1");
+    if (!button1 || isPrimaryClick(button1)) return true;
+    return layer.some((a) => base(a.control) !== "button-1" && isPrimaryClick(a));
+  }
+
   async function assign(controlId: string, command: Command) {
     const key = keyFor(controlId);
     const next = assignments.filter((a) => a.control !== key);
     if (command.value !== "") {
-      next.push({
-        control: key,
-        category: command.category,
-        label: command.label,
-        value: command.value,
-      });
+      next.push({ control: key, category: command.category, label: command.label, value: command.value });
     }
+    if (!keepsPrimary(next)) {
+      primaryDialog = { control: controlId };
+      return;
+    }
+    await commitAssignments(next, controlId, command);
+  }
+
+  async function commitAssignments(next: Assignment[], controlId: string, command: Command) {
     assignments = next;
     const profile = configStore.deviceProfile(device.id);
     await configStore.saveDeviceProfile(device.id, { ...profile, assignments: next });
-    ui.toast(
-      command.value === ""
-        ? `Cleared ${controlLabel(controlId)}.`
-        : `${controlLabel(controlId)} → ${command.label}`,
-      "success",
-      2200,
+    await pushToDevice(
+      command.value === "" ? `Cleared ${controlLabel(controlId)}.` : `${controlLabel(controlId)} → ${command.label}`,
     );
+  }
+
+  /** Applies the saved assignments to the hardware and reports how. */
+  async function pushToDevice(what: string) {
+    try {
+      const r = await api.applyAssignments(device.id);
+      const how = r.software && r.onboard ? "live + onboard" : r.software ? "live" : r.onboard ? "onboard" : "saved";
+      ui.toast(`${what} (${how})`, "success", 2200);
+    } catch (e) {
+      ui.toast(`${what} — not applied: ${api.errorMessage(e)}`, "error", 6000);
+    }
   }
 
   /** "ctrl+shift+z" → "CTRL + SHIFT + Z", as G HUB prints keystrokes. */
@@ -223,7 +269,16 @@
     if (!value.includes("+") && value.length > 1 && !/^[a-z]/.test(value)) return value;
     return value
       .split("+")
-      .map((k) => (k.length === 1 ? k.toUpperCase() : k.replace(/^super$/i, "Left Windows").replace(/^\w/, (c) => c.toUpperCase())))
+      .map((k) => k.trim())
+      .map((k) =>
+        k.length === 1
+          ? k.toUpperCase()
+          : k
+              .replace(/^(left |right )?windows$/i, "Super")
+              .replace(/^super$/i, "Super")
+              .replace(/^XF86/, "")
+              .replace(/^\w/, (c) => c.toUpperCase()),
+      )
       .join(" + ")
       .replace(/\b(Ctrl|Alt|Shift)\b/g, (m) => m.toUpperCase());
   }
@@ -320,7 +375,7 @@
     macros = macros.filter((m) => m.id !== id);
     assignments = assignments.filter((a) => !(a.category === "macro" && a.value === id));
     if (editingMacro?.id === id) editingMacro = null;
-    persistMacros();
+    persistMacros().then(() => pushToDevice("Macro removed"));
   }
 
   async function persistMacros() {
@@ -340,32 +395,23 @@
       return;
     }
 
-    const next = assignments.filter((a) => a.control !== selected);
-    next.push({ control: selected, category: "macro", label: def.name, value: def.id });
-    assignments = next;
-    await persistMacros();
-    await writeToDevice();
-  }
-
-  /** Renders every macro binding into the device's onboard memory. */
-  async function writeToDevice() {
-    if (!device.capabilities.onboardMemory) {
-      ui.toast("This device has no onboard memory to store macros in.", "error");
+    const key = keyFor(selected);
+    const next = assignments.filter((a) => a.control !== key);
+    next.push({ control: key, category: "macro", label: def.name, value: def.id });
+    if (!keepsPrimary(next)) {
+      primaryDialog = { control: selected };
       return;
     }
+    assignments = next;
+    await persistMacros();
+    await pushToDevice(`${controlLabel(selected)} → ${def.name}`);
+  }
+
+  /** Re-pushes every assignment (macros included) to the device. */
+  async function writeToDevice() {
     writing = true;
     try {
-      const payload = assignments
-        .filter((a) => a.category === "macro")
-        .flatMap((a) => {
-          const index = buttonIndexFor(a.control);
-          const def = macros.find((m) => m.id === a.value);
-          return index !== null && def ? [{ button: index, steps: def.steps }] : [];
-        });
-      const backup = await api.applyOnboardMacros(device.id, payload);
-      ui.toast(`Written to the device. Backup: ${backup.split("/").pop()}`, "success", 5000);
-    } catch (e) {
-      ui.toast(`Could not write macros: ${api.errorMessage(e)}`, "error", 7000);
+      await pushToDevice("Assignments written");
     } finally {
       writing = false;
     }
@@ -457,7 +503,11 @@
     editingMacro = next;
     editingFresh = false;
     await persistMacros();
-    ui.toast(`Saved ${next.name}.`, "success", 2200);
+    if (assignments.some((a) => a.category === "macro" && a.value === next.id)) {
+      await pushToDevice(`Saved ${next.name}`);
+    } else {
+      ui.toast(`Saved ${next.name}.`, "success", 2200);
+    }
   }
 </script>
 
@@ -509,12 +559,12 @@
         </button>
 
         <p class="hint">
-          Click a macro to bind it to <strong>{controlLabel(selected)}</strong> and write it to
-          the device. Using {macroBytes}/{macroBudget} bytes of the macro sector.
+          Click a macro to bind it to <strong>{controlLabel(selected)}</strong>.
+          {#if device.capabilities.onboardMemory}Using {macroBytes}/{macroBudget} bytes of the onboard macro sector.{/if}
         </p>
         <button class="new-macro" onclick={writeToDevice} disabled={writing}>
           <Icon name="chip" size={14} />
-          {writing ? "Writing…" : "Re-write macros to device"}
+          {writing ? "Writing…" : "Re-apply to device"}
         </button>
       </div>
     {:else if group === "Commands" && gameCommands}
@@ -658,6 +708,22 @@
   {/if}
 {/snippet}
 
+{#if primaryDialog}
+  <div class="scrim" role="presentation" onclick={(e) => e.target === e.currentTarget && (primaryDialog = null)}>
+    <div class="dialog" role="dialog" aria-modal="true">
+      <Icon name="alert" size={30} strokeWidth={1.5} />
+      <h3>Primary click required</h3>
+      <p>
+        {controlLabel(primaryDialog.control)} is your only Primary Click. Assign
+        <strong>Actions → Primary Click</strong> to another button first, then change this one.
+      </p>
+      <div class="dialog-actions">
+        <button class="dialog-ok" onclick={() => (primaryDialog = null)}>OK</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
 {#if editingMacro}
   {#key editingMacro.id}
     <MacroEditor
@@ -673,6 +739,61 @@
 {/if}
 
 <style>
+  .scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    display: grid;
+    place-items: center;
+    background: rgba(0, 0, 0, 0.65);
+  }
+
+  .dialog {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    width: 420px;
+    padding: 28px 28px 22px;
+    border-radius: 8px;
+    background: var(--surface);
+    text-align: center;
+    color: var(--text);
+  }
+
+  .dialog h3 {
+    font-size: 16px;
+    font-weight: 700;
+  }
+
+  .dialog p {
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-dim);
+  }
+
+  .dialog p strong {
+    color: var(--text);
+  }
+
+  .dialog-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 6px;
+  }
+
+  .dialog-ok {
+    padding: 9px 26px;
+    border-radius: 4px;
+    background: var(--cyan);
+    font-family: var(--font);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #fff;
+  }
+
   .group-tabs {
     display: flex;
     flex-wrap: wrap;

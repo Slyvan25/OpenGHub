@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::hidpp::features::{self, BatteryState, DpiState, ReportRateState};
 use crate::hidpp::registry::{self, DeviceKind};
+use crate::profiles::{Assignment, MacroDef};
+use crate::remap::{self, Action, Plan};
 use crate::wheel::{self, WheelHandle, WheelSettings, WheelState};
 use crate::hidpp::{self, DeviceAddress, Error, Handle, Result, RECEIVER_CHILD_INDICES};
 
@@ -136,6 +138,25 @@ impl DeviceSnapshot {
     }
 }
 
+/// What `apply_assignments` managed to do for a device.
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssignmentReport {
+    /// Buttons are being handled by OpenGHub while it runs.
+    pub software: bool,
+    /// The onboard profile's button table was written too.
+    pub onboard: bool,
+}
+
+/// A button edge on a device with a software-mode assignment.
+#[derive(Debug, Clone)]
+pub struct ButtonEvent {
+    pub device_id: String,
+    pub button: u8,
+    pub pressed: bool,
+    pub action: Action,
+}
+
 /// Why the device list came back empty. The dashboard renders a different
 /// message for each, because "no Logitech hardware" and "hardware is there but
 /// this user cannot open it" need completely different fixes.
@@ -165,6 +186,13 @@ struct Inner {
     handles: HashMap<String, Handle>,
     /// Classic wheels, keyed like `snapshots`.
     wheels: HashMap<String, WheelHandle>,
+    /// Software-mode assignment plans per device, plus the `0x8110` feature
+    /// index for the mice that report through the spy.
+    plans: HashMap<String, Plan>,
+    spy_index: HashMap<String, u8>,
+    /// Fingerprint of what was last written to each device's onboard button
+    /// table, so profile switches and restarts do not rewrite flash needlessly.
+    onboard_written: HashMap<String, u64>,
     snapshots: HashMap<String, DeviceSnapshot>,
     order: Vec<String>,
     /// True when we are showing synthetic devices because no real ones were found.
@@ -193,6 +221,9 @@ impl DeviceManager {
                 api,
                 handles: HashMap::new(),
                 wheels: HashMap::new(),
+                plans: HashMap::new(),
+                spy_index: HashMap::new(),
+                onboard_written: HashMap::new(),
                 snapshots: HashMap::new(),
                 order: Vec::new(),
                 demo: false,
@@ -303,6 +334,213 @@ impl DeviceManager {
     }
 
     /// Applies a DPI change, updating the cached snapshot on success.
+    // -- assignments ----------------------------------------------------------
+
+    /// Applies a profile's button assignments to a device: the software-mode
+    /// plan (spy + remapping, or the wheel's button mask) and, where the
+    /// device has onboard profiles, the onboard button table too.
+    pub fn apply_assignments(
+        &self,
+        id: &str,
+        assignments: &[Assignment],
+        macros: &[MacroDef],
+    ) -> Result<AssignmentReport> {
+        let mut inner = self.inner.lock();
+        let mut report = AssignmentReport::default();
+        if inner.demo {
+            return Ok(report);
+        }
+
+        if inner.wheels.contains_key(id) {
+            let plan = Plan::build(assignments, macros, 28);
+            report.software = !plan.actions.is_empty();
+            inner.plans.insert(id.to_string(), plan);
+            return Ok(report);
+        }
+
+        let (spy, onboard, spy_idx) = inner.with_handle(id, |h| {
+            let spy = h.supports(features::button_spy::ID);
+            let onboard = h.supports(features::onboard::ID);
+            let idx = if spy { h.feature_index(features::button_spy::ID).ok() } else { None };
+            Ok((spy, onboard, idx))
+        })?;
+
+        if spy {
+            let count = inner.with_handle(id, features::spy_button_count)?;
+            let plan = Plan::build(assignments, macros, count);
+            let table = plan.remapping;
+            let needs_spy = plan.needs_spy();
+            inner.with_handle(id, |h| {
+                features::write_remapping(h, &table)?;
+                features::set_spy(h, needs_spy)?;
+                // Software mode means host mode: otherwise the onboard table
+                // would fire alongside the spy and act twice.
+                if needs_spy && onboard && !matches!(features::read_onboard_mode(h), Ok(features::onboard::MODE_HOST)) {
+                    features::write_onboard_mode(h, features::onboard::MODE_HOST)?;
+                }
+                Ok(())
+            })?;
+            report.software = needs_spy;
+            if let Some(i) = spy_idx {
+                inner.spy_index.insert(id.to_string(), i);
+            }
+            inner.plans.insert(id.to_string(), plan);
+        }
+
+        // Flash is written only when the table actually changed.
+        let fingerprint = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            serde_json::to_string(assignments).unwrap_or_default().hash(&mut h);
+            serde_json::to_string(macros).unwrap_or_default().hash(&mut h);
+            h.finish()
+        };
+        if onboard && inner.onboard_written.get(id) == Some(&fingerprint) {
+            report.onboard = true;
+        } else if onboard {
+            use crate::hidpp::onboard;
+            let product_id = inner.snapshots.get(id).map(|s| s.product_id).unwrap_or(0);
+            let result = inner.with_handle(id, |h| {
+                let info = onboard::read_info(h)?;
+                let size = info.sector_size as usize;
+                let directory = onboard::parse_directory(&onboard::read_sector(h, 0, size, true)?);
+                let profile = directory
+                    .iter()
+                    .position(|e| e.enabled)
+                    .ok_or_else(|| Error::other("the device has no enabled onboard profile"))?;
+                let sector = directory[profile].sector;
+                let macro_sector = onboard::macro_sector_for(&info, profile);
+
+                // Backup before touching flash, every time.
+                let backup = onboard::backup(h, id, product_id)?;
+                write_backup(&backup)?;
+
+                // The whole table is written every time: assigned buttons get
+                // their descriptor, every other button its factory default.
+                // Writing only the assigned ones let stale bindings pile up
+                // across profiles (a left click pointing at a dead macro).
+                let count = info.button_count as usize;
+                let factory = factory_buttons(product_id, count);
+                let mut buttons: Vec<(u8, onboard::Button)> = Vec::new();
+                let mut macro_assignments: Vec<onboard::MacroAssignment> = Vec::new();
+                let mut covered = vec![false; count];
+                for a in assignments {
+                    if a.control.contains(':') {
+                        continue;
+                    }
+                    let Some(index) = remap::button_index(&a.control) else { continue };
+                    let Some(action) = remap::action_for(a, macros) else { continue };
+                    if (index as usize) >= count {
+                        continue;
+                    }
+                    match action {
+                        Action::Macro(steps) => {
+                            macro_assignments.push(onboard::MacroAssignment { button: index, steps });
+                            covered[index as usize] = true;
+                        }
+                        other => {
+                            if let Some(b) = other.onboard_button(None) {
+                                buttons.push((index, b));
+                                covered[index as usize] = true;
+                            }
+                        }
+                    }
+                }
+                for (i, done) in covered.iter().enumerate() {
+                    if !done {
+                        if let Some(b) = factory.get(i) {
+                            buttons.push((i as u8, *b));
+                        }
+                    }
+                }
+                // Same guard as the software plan: something must be the left click.
+                let has_primary = buttons.iter().any(|(_, b)| matches!(b, onboard::Button::Mouse { mask: 1 }));
+                if !has_primary && count > 0 {
+                    buttons.retain(|(i, _)| *i != 0);
+                    macro_assignments.retain(|m| m.button != 0);
+                    buttons.push((0, onboard::Button::Mouse { mask: 1 }));
+                }
+                onboard::apply_buttons(h, sector, macro_sector, &buttons, &macro_assignments, &info)
+            });
+            match result {
+                Ok(()) => {
+                    report.onboard = true;
+                    inner.onboard_written.insert(id.to_string(), fingerprint);
+                }
+                Err(e) => log::warn!("{id}: onboard button table not written: {e}"),
+            }
+        }
+        Ok(report)
+    }
+
+    /// Button edges since the last call, with the action each one maps to.
+    /// Cheap when nothing is pressed; meant for a fast polling thread.
+    pub fn pump_button_events(&self) -> Vec<ButtonEvent> {
+        let mut inner = self.inner.lock();
+        let mut out = Vec::new();
+        let ids: Vec<String> = inner.plans.keys().cloned().collect();
+        for id in ids {
+            let mask = if let Some(w) = inner.wheels.get(&id) {
+                if !w.bridge_running() {
+                    w.poll();
+                }
+                Some(w.state.lock().buttons as u16)
+            } else if let Some(spy) = inner.spy_index.get(&id).copied() {
+                let events = match inner.handles.get_mut(&id) {
+                    Some(h) => h.poll_events(),
+                    None => continue,
+                };
+                // Several reports may have queued; replay every edge in order.
+                let plan = inner.plans.get_mut(&id).expect("plan");
+                for ev in events {
+                    if let Some(mask) = features::spy_event_mask(&ev, spy) {
+                        for (button, pressed) in plan.transitions(mask) {
+                            if let Some(action) = plan.actions.get(&button) {
+                                out.push(ButtonEvent { device_id: id.clone(), button, pressed, action: action.clone() });
+                            }
+                        }
+                    }
+                }
+                None
+            } else {
+                None
+            };
+            if let Some(mask) = mask {
+                let plan = inner.plans.get_mut(&id).expect("plan");
+                for (button, pressed) in plan.transitions(mask) {
+                    if let Some(action) = plan.actions.get(&button) {
+                        out.push(ButtonEvent { device_id: id.clone(), button, pressed, action: action.clone() });
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Hands the device back to itself: identity remapping, spy off, onboard
+    /// mode — so buttons keep working when OpenGHub is not running.
+    pub fn release_devices(&self) {
+        let mut inner = self.inner.lock();
+        let ids: Vec<String> = inner.handles.keys().cloned().collect();
+        for id in ids {
+            let _ = inner.with_handle(&id, |h| {
+                if h.supports(features::button_spy::ID) {
+                    let mut table = [0u8; 16];
+                    for (i, v) in table.iter_mut().enumerate() {
+                        *v = i as u8 + 1;
+                    }
+                    let _ = features::set_spy(h, false);
+                    let _ = features::write_remapping(h, &table);
+                }
+                if h.supports(features::onboard::ID) {
+                    let _ = features::write_onboard_mode(h, features::onboard::MODE_ONBOARD);
+                }
+                Ok(())
+            });
+        }
+        inner.plans.clear();
+    }
+
     // -- wheels ---------------------------------------------------------------
 
     fn with_wheel<T>(&self, id: &str, f: impl FnOnce(&mut WheelHandle) -> Result<T>) -> Result<T> {
@@ -462,25 +700,7 @@ impl DeviceManager {
             .map(|s| (s.name.clone(), s.product_id))
             .unwrap_or_default();
         let backup = inner.with_handle(id, |h| crate::hidpp::onboard::backup(h, &name, pid))?;
-
-        let dir = crate::artwork::dir()
-            .parent()
-            .map(|d| d.join("backups"))
-            .ok_or_else(|| Error::other("could not resolve the data directory"))?;
-        std::fs::create_dir_all(&dir)
-            .map_err(|e| Error::other(format!("could not create {}: {e}", dir.display())))?;
-
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        let path = dir.join(format!("{:04x}-{stamp}.json", backup.product_id));
-
-        let json = serde_json::to_string_pretty(&backup)
-            .map_err(|e| Error::other(format!("could not serialise the backup: {e}")))?;
-        std::fs::write(&path, json)
-            .map_err(|e| Error::other(format!("could not write {}: {e}", path.display())))?;
-        Ok(path)
+        write_backup(&backup)
     }
 
     /// The device's onboard profiles, decoded.
@@ -670,6 +890,9 @@ impl Inner {
         // Drop anything that disappeared, preserving the order of what remains.
         self.handles.retain(|id, _| seen.contains(id));
         self.wheels.retain(|id, _| seen.contains(id));
+        self.plans.retain(|id, _| seen.contains(id));
+        self.spy_index.retain(|id, _| seen.contains(id));
+        self.onboard_written.retain(|id, _| seen.contains(id));
         self.snapshots.retain(|id, _| seen.contains(id));
         self.order = seen;
 
@@ -763,6 +986,73 @@ impl Inner {
 }
 
 /// Fills in everything about a device: identity first, then live state.
+/// The factory button descriptors for a product, read from the oldest backup
+/// OpenGHub took of it — the first backup happens before the first write, so
+/// it is the table the mouse shipped with. Empty when there is no backup.
+pub fn factory_buttons(product_id: u16, count: usize) -> Vec<crate::hidpp::onboard::Button> {
+    use crate::hidpp::onboard::{self, Button, BUTTONS_OFFSET};
+    let Some(dir) = crate::artwork::dir().parent().map(|d| d.join("backups")) else {
+        return vec![];
+    };
+    let prefix = format!("{product_id:04x}-");
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)
+        .map(|rd| {
+            rd.flatten()
+                .map(|e| e.path())
+                .filter(|p| p.file_name().and_then(|n| n.to_str()).map(|n| n.starts_with(&prefix)).unwrap_or(false))
+                .collect()
+        })
+        .unwrap_or_default();
+    files.sort();
+    let Some(oldest) = files.first() else {
+        return vec![];
+    };
+    let Ok(text) = std::fs::read_to_string(oldest) else {
+        return vec![];
+    };
+    let Ok(backup) = serde_json::from_str::<onboard::MemoryBackup>(&text) else {
+        return vec![];
+    };
+    let unhex = |h: &str| -> Vec<u8> { (0..h.len()).step_by(2).filter_map(|i| u8::from_str_radix(&h[i..i + 2], 16).ok()).collect() };
+    let Some(dir_sector) = backup.sectors.first() else {
+        return vec![];
+    };
+    let directory = onboard::parse_directory(&unhex(dir_sector));
+    let Some(entry) = directory.iter().find(|e| e.enabled) else {
+        return vec![];
+    };
+    let Some(profile) = backup.sectors.get(entry.sector as usize) else {
+        return vec![];
+    };
+    let bytes = unhex(profile);
+    (0..count)
+        .filter_map(|i| {
+            let at = BUTTONS_OFFSET + i * 4;
+            bytes.get(at..at + 4).map(|b| Button::decode([b[0], b[1], b[2], b[3]]))
+        })
+        .collect()
+}
+
+/// Writes an onboard-memory backup to the data directory and returns its path.
+pub fn write_backup(backup: &crate::hidpp::onboard::MemoryBackup) -> Result<std::path::PathBuf> {
+    let dir = crate::artwork::dir()
+        .parent()
+        .map(|d| d.join("backups"))
+        .ok_or_else(|| Error::other("could not resolve the data directory"))?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| Error::other(format!("could not create {}: {e}", dir.display())))?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let path = dir.join(format!("{:04x}-{stamp}.json", backup.product_id));
+    let json = serde_json::to_string_pretty(backup)
+        .map_err(|e| Error::other(format!("could not serialise the backup: {e}")))?;
+    std::fs::write(&path, json)
+        .map_err(|e| Error::other(format!("could not write {}: {e}", path.display())))?;
+    Ok(path)
+}
+
 /// The evdev nodes the kernel created for the HID interface behind a hidraw
 /// path (`/dev/hidrawN` → `/sys/class/hidraw/hidrawN/device/input/*/event*`).
 fn wheel_evdev_nodes(hidraw_path: &str) -> Vec<String> {

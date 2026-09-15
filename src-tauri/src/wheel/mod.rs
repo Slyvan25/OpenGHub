@@ -23,7 +23,8 @@
 //! so no kernel module is needed.
 
 pub mod ffb;
-pub mod uinput;
+/// The uinput binding lives at the crate root; re-exported for the bridge.
+pub use crate::uinput;
 
 use std::sync::Arc;
 

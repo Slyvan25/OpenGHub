@@ -152,6 +152,17 @@ export const getDeviceProfile = (deviceId: string) =>
 export const saveSettings = (settings: Settings) => call<Config>("save_settings", { settings });
 export const getConfigPath = () => call<string>("get_config_path");
 
+// -- assignments -----------------------------------------------------------
+
+export interface AssignmentReport {
+  software: boolean;
+  onboard: boolean;
+}
+
+/** Pushes the active profile's assignments for a device to the hardware. */
+export const applyAssignments = (deviceId: string) =>
+  call<AssignmentReport>("apply_assignments", { deviceId });
+
 // -- steering wheels -------------------------------------------------------
 
 export const getWheelState = (deviceId: string) => call<WheelState>("get_wheel_state", { deviceId });

@@ -71,6 +71,7 @@ pub async fn get_connected_devices(
     let payload = DeviceListPayload::build(&manager, devices);
     let _ = app.emit(EVENT_DEVICES, &payload);
     crate::apply_wheel_profiles(&app);
+    crate::apply_assignment_profiles(&app);
     // Newly connected devices get their render fetched in the background.
     crate::spawn_artwork_fetch(app, payload.devices.clone());
     Ok(payload)
@@ -306,6 +307,7 @@ pub async fn set_active_profile(app: AppHandle, store: State<'_, Store>, profile
         }
     })?;
     crate::apply_wheel_profiles(&app);
+    crate::apply_assignment_profiles(&app);
     Ok(store.get())
 }
 
@@ -475,6 +477,33 @@ pub async fn bind_profile_application(
         }
     })?;
     Ok(store.get())
+}
+
+// ---------------------------------------------------------------------------
+// Assignments
+// ---------------------------------------------------------------------------
+
+/// Pushes the active profile's assignments for one device to the hardware:
+/// software mode (spy + remapping) now, and the onboard table where there is
+/// one. Called by the Assignments screen after every change.
+#[tauri::command]
+pub async fn apply_assignments(
+    app: AppHandle,
+    manager: State<'_, DeviceManager>,
+    store: State<'_, Store>,
+    device_id: String,
+) -> Result<crate::state::AssignmentReport> {
+    let cfg = store.get();
+    let dp = cfg
+        .profiles
+        .iter()
+        .find(|p| p.id == cfg.active_profile)
+        .and_then(|p| p.devices.get(&device_id))
+        .cloned()
+        .unwrap_or_default();
+    let report = manager.apply_assignments(&device_id, &dp.assignments, &dp.macros)?;
+    emit_device_update(&app, &manager, &device_id);
+    Ok(report)
 }
 
 // ---------------------------------------------------------------------------

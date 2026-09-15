@@ -28,8 +28,22 @@ pub const ABS_RZ: u16 = 0x05;
 pub const ABS_HAT0X: u16 = 0x10;
 pub const ABS_HAT0Y: u16 = 0x11;
 
+pub const EV_REL: u16 = 0x02;
+pub const REL_WHEEL: u16 = 0x08;
+pub const REL_HWHEEL: u16 = 0x06;
+
+pub const BTN_LEFT: u16 = 0x110;
+pub const BTN_RIGHT: u16 = 0x111;
+pub const BTN_MIDDLE: u16 = 0x112;
+pub const BTN_SIDE: u16 = 0x113;
+pub const BTN_EXTRA: u16 = 0x114;
+pub const BTN_FORWARD: u16 = 0x115;
+pub const BTN_BACK: u16 = 0x116;
+pub const BTN_TASK: u16 = 0x117;
 pub const BTN_TRIGGER: u16 = 0x120;
 pub const BTN_TRIGGER_HAPPY: u16 = 0x2c0;
+/// Highest key/button code we declare on virtual keyboards.
+pub const KEY_MAX: u16 = 0x2ff;
 
 pub const FF_RUMBLE: u16 = 0x50;
 pub const FF_PERIODIC: u16 = 0x51;
@@ -76,6 +90,7 @@ const UI_DEV_SETUP: u64 = iow(3, size_of::<uinput_setup>());
 const UI_ABS_SETUP: u64 = iow(4, size_of::<uinput_abs_setup>());
 const UI_SET_EVBIT: u64 = iow(100, size_of::<libc::c_int>());
 const UI_SET_KEYBIT: u64 = iow(101, size_of::<libc::c_int>());
+const UI_SET_RELBIT: u64 = iow(102, size_of::<libc::c_int>());
 const UI_SET_ABSBIT: u64 = iow(103, size_of::<libc::c_int>());
 const UI_SET_FFBIT: u64 = iow(107, size_of::<libc::c_int>());
 const UI_BEGIN_FF_UPLOAD: u64 = iowr(200, size_of::<uinput_ff_upload>());
@@ -164,6 +179,42 @@ impl VirtualDevice {
             setup.id.product = product;
             setup.id.version = 1;
             setup.ff_effects_max = ff_effects_max;
+            let bytes = name.as_bytes();
+            let n = bytes.len().min(libc::UINPUT_MAX_NAME_SIZE - 1);
+            for (i, b) in bytes[..n].iter().enumerate() {
+                setup.name[i] = *b as libc::c_char;
+            }
+            ioctl_ptr(fd, UI_DEV_SETUP, &mut setup)?;
+            ioctl_int(fd, UI_DEV_CREATE, 0)?;
+        }
+        Ok(VirtualDevice { file })
+    }
+
+    /// A virtual keyboard + mouse-button + scroll device, for injecting the
+    /// keys and clicks that assignments and macros produce. Every key code up
+    /// to `KEY_MAX` is declared so any mapping works.
+    pub fn create_keyboard(name: &str, vendor: u16, product: u16) -> io::Result<Self> {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open("/dev/uinput")?;
+        let fd = file.as_raw_fd();
+        unsafe {
+            ioctl_int(fd, UI_SET_EVBIT, EV_SYN as _)?;
+            ioctl_int(fd, UI_SET_EVBIT, EV_KEY as _)?;
+            ioctl_int(fd, UI_SET_EVBIT, EV_REL as _)?;
+            for code in 1..=KEY_MAX {
+                let _ = ioctl_int(fd, UI_SET_KEYBIT, code as _);
+            }
+            ioctl_int(fd, UI_SET_RELBIT, REL_WHEEL as _)?;
+            ioctl_int(fd, UI_SET_RELBIT, REL_HWHEEL as _)?;
+
+            let mut setup: uinput_setup = std::mem::zeroed();
+            setup.id.bustype = BUS_USB;
+            setup.id.vendor = vendor;
+            setup.id.product = product;
+            setup.id.version = 1;
             let bytes = name.as_bytes();
             let n = bytes.len().min(libc::UINPUT_MAX_NAME_SIZE - 1);
             for (i, b) in bytes[..n].iter().enumerate() {

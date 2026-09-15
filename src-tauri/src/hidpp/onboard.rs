@@ -179,6 +179,10 @@ pub fn parse_directory(sector0: &[u8]) -> Vec<ProfileEntry> {
 pub enum Button {
     /// Standard mouse button; `mask` has one bit set per physical button.
     Mouse { mask: u16 },
+    /// Keyboard key: HID modifier bitmask plus a keyboard usage.
+    Key { modifiers: u8, usage: u8 },
+    /// Consumer-control usage (media keys), big-endian.
+    Consumer { usage: u16 },
     /// Built-in action such as DPI up/down or profile cycle.
     Special { action: u8 },
     /// Runs a macro stored at `sector`/`offset`.
@@ -191,7 +195,11 @@ pub enum Button {
 impl Button {
     pub fn decode(b: [u8; 4]) -> Self {
         match b[0] {
-            BUTTON_MOUSE => Button::Mouse { mask: u16::from_be_bytes([b[2], b[3]]) },
+            BUTTON_MOUSE => match b[1] {
+                0x02 => Button::Key { modifiers: b[2], usage: b[3] },
+                0x03 => Button::Consumer { usage: u16::from_be_bytes([b[2], b[3]]) },
+                _ => Button::Mouse { mask: u16::from_be_bytes([b[2], b[3]]) },
+            },
             BUTTON_SPECIAL => Button::Special { action: b[1] },
             BUTTON_MACRO => Button::Macro { sector: b[1], offset: u16::from_be_bytes([b[2], b[3]]) },
             BUTTON_DISABLED => Button::Disabled,
@@ -204,6 +212,11 @@ impl Button {
             Button::Mouse { mask } => {
                 let [h, l] = mask.to_be_bytes();
                 [BUTTON_MOUSE, 0x01, h, l]
+            }
+            Button::Key { modifiers, usage } => [BUTTON_MOUSE, 0x02, modifiers, usage],
+            Button::Consumer { usage } => {
+                let [h, l] = usage.to_be_bytes();
+                [BUTTON_MOUSE, 0x03, h, l]
             }
             Button::Special { action } => [BUTTON_SPECIAL, action, 0xff, 0x00],
             Button::Macro { sector, offset } => {
@@ -488,6 +501,34 @@ pub fn apply_macros(
     }
     write_sector(h, profile_sector, &profile)?;
     Ok(())
+}
+
+/// Writes a full set of button descriptors into the profile: macros are laid
+/// out in the macro sector as in [`apply_macros`], every other button gets the
+/// descriptor given, and buttons not mentioned keep what they had.
+pub fn apply_buttons(
+    h: &mut Handle,
+    profile_sector: u16,
+    macro_sector: u16,
+    buttons: &[(u8, Button)],
+    macros: &[MacroAssignment],
+    info: &OnboardInfo,
+) -> Result<()> {
+    apply_macros(h, profile_sector, macro_sector, macros, info)?;
+    if buttons.is_empty() {
+        return Ok(());
+    }
+    let size = info.sector_size as usize;
+    let usable = size - 2;
+    let mut profile = read_sector(h, profile_sector, size, true)?;
+    for (button, descriptor) in buttons {
+        let at = BUTTONS_OFFSET + *button as usize * 4;
+        if at + 4 > usable {
+            return Err(Error::other(format!("button {button} is outside the profile sector")));
+        }
+        profile[at..at + 4].copy_from_slice(&descriptor.encode());
+    }
+    write_sector(h, profile_sector, &profile)
 }
 
 /// Restores one sector verbatim from a backup file.

@@ -7,9 +7,12 @@ pub mod community;
 pub mod demo;
 pub mod depot;
 pub mod games;
+pub mod keymap;
+pub mod remap;
 pub mod hidpp;
 pub mod profiles;
 pub mod state;
+pub mod uinput;
 pub mod wheel;
 
 use std::time::Duration;
@@ -37,6 +40,7 @@ pub fn run() {
         .manage(Store::load())
         .manage(std::sync::Arc::new(apps::AppDatabase::new()))
         .manage(games::Library::default())
+        .manage(std::sync::Arc::new(remap::Injector::new()))
         .setup(|app| {
             let handle = app.handle().clone();
 
@@ -48,6 +52,8 @@ pub fn run() {
 
             build_tray(app)?;
             apply_wheel_profiles(&handle);
+            apply_assignment_profiles(&handle);
+            spawn_button_pump(handle.clone());
             spawn_wheel_telemetry(handle.clone());
             spawn_battery_poller(handle.clone());
             spawn_application_watcher(handle);
@@ -79,6 +85,7 @@ pub fn run() {
             commands::preview_community_profile,
             commands::import_community_profile,
             commands::export_profile,
+            commands::apply_assignments,
             commands::get_wheel_state,
             commands::get_wheel_settings,
             commands::set_wheel_settings,
@@ -116,8 +123,14 @@ pub fn run() {
             commands::window_toggle_maximize,
             commands::window_close,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running OpenGHub");
+        .build(tauri::generate_context!())
+        .expect("error while building OpenGHub")
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                app.state::<DeviceManager>().release_devices();
+                app.state::<std::sync::Arc<remap::Injector>>().release_all();
+            }
+        });
 }
 
 fn build_tray(app: &tauri::App) -> tauri::Result<()> {
@@ -139,7 +152,13 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
                     let _ = w.set_focus();
                 }
             }
-            "quit" => app.exit(0),
+            "quit" => {
+                // Give the devices back before going: identity remapping,
+                // spy off, onboard mode, released keys.
+                app.state::<DeviceManager>().release_devices();
+                app.state::<std::sync::Arc<remap::Injector>>().release_all();
+                app.exit(0)
+            }
             _ => {}
         })
         .build(app)?;
@@ -250,6 +269,7 @@ fn spawn_application_watcher(app: tauri::AppHandle) {
                     let _ = store.update(|c| c.active_profile = id);
                     let _ = app.emit(commands::EVENT_CONFIG_CHANGED, store.get());
                     apply_wheel_profiles(&app);
+                    apply_assignment_profiles(&app);
                 }
             }
         }
@@ -281,6 +301,163 @@ pub fn apply_wheel_profiles(app: &tauri::AppHandle) {
             Err(e) => log::warn!("wheel {id}: force-feedback driver not started: {e}"),
         }
     }
+}
+
+/// Pushes the active profile's button assignments to every connected device.
+pub fn apply_assignment_profiles(app: &tauri::AppHandle) {
+    let manager = app.state::<DeviceManager>();
+    let store = app.state::<Store>();
+    let cfg = store.get();
+    let active = cfg.profiles.iter().find(|p| p.id == cfg.active_profile);
+    for snap in manager.snapshots() {
+        if snap.demo || !snap.online {
+            continue;
+        }
+        let dp = active.and_then(|p| p.devices.get(&snap.id));
+        let assignments = dp.map(|d| d.assignments.clone()).unwrap_or_default();
+        let macros = dp.map(|d| d.macros.clone()).unwrap_or_default();
+        match manager.apply_assignments(&snap.id, &assignments, &macros) {
+            Ok(r) if r.software || r.onboard => log::info!(
+                "{}: {} assignment(s) applied (software: {}, onboard: {})",
+                snap.name,
+                assignments.len(),
+                r.software,
+                r.onboard
+            ),
+            Ok(_) => {}
+            Err(e) => log::debug!("{}: assignments not applied: {e}", snap.name),
+        }
+    }
+}
+
+/// Polls every device with software-mode assignments for button edges and
+/// performs the assigned actions. 4 ms keeps click-to-key latency invisible.
+fn spawn_button_pump(app: tauri::AppHandle) {
+    std::thread::Builder::new()
+        .name("button-pump".into())
+        .spawn(move || loop {
+            std::thread::sleep(Duration::from_millis(4));
+            let events = app.state::<DeviceManager>().pump_button_events();
+            for ev in events {
+                perform(&app, ev);
+            }
+        })
+        .expect("button pump thread");
+}
+
+/// Runs one assignment edge. Keys are held for as long as the button is.
+fn perform(app: &tauri::AppHandle, ev: state::ButtonEvent) {
+    use remap::Action;
+    let injector = app.state::<std::sync::Arc<remap::Injector>>().inner().clone();
+    let result: std::io::Result<()> = match &ev.action {
+        Action::Keys(codes) => injector.chord(codes, ev.pressed),
+        Action::MouseButton(n) => injector.mouse_button(*n, ev.pressed),
+        Action::Macro(steps) => {
+            if ev.pressed {
+                injector.play_macro(steps.clone());
+            }
+            Ok(())
+        }
+        Action::LockScreen => {
+            if ev.pressed {
+                remap::lock_screen();
+            }
+            Ok(())
+        }
+        Action::DpiUp | Action::DpiDown | Action::DpiCycle | Action::DpiDefault | Action::DpiShift => {
+            dpi_action(app, &ev.device_id, &ev.action, ev.pressed);
+            Ok(())
+        }
+        Action::ProfileNext => {
+            if ev.pressed {
+                next_profile(app);
+            }
+            Ok(())
+        }
+        Action::Disabled => Ok(()),
+    };
+    if let Err(e) = result {
+        log::warn!("assignment on {} button {} failed: {e}", ev.device_id, ev.button + 1);
+    }
+}
+
+/// DPI up / down / cycle / default / shift against the profile's stage list,
+/// written to the device and saved back so the Sensitivity page follows.
+fn dpi_action(app: &tauri::AppHandle, device_id: &str, action: &remap::Action, pressed: bool) {
+    use remap::Action;
+    let store = app.state::<Store>();
+    let manager = app.state::<DeviceManager>();
+    let cfg = store.get();
+    let Some(profile) = cfg.profiles.iter().find(|p| p.id == cfg.active_profile) else { return };
+    let dp = profile.devices.get(device_id).cloned().unwrap_or_default();
+    if dp.dpi_stages.is_empty() {
+        return;
+    }
+    let last = dp.dpi_stages.len() - 1;
+    let current = dp.active_stage.min(last);
+
+    // Shift is momentary: jump on press, come back on release, stage unchanged.
+    if let Action::DpiShift = action {
+        let shift = dp.shift_stage.unwrap_or(0).min(last);
+        let target = if pressed { dp.dpi_stages[shift] } else { dp.dpi_stages[current] };
+        if let Err(e) = manager.set_dpi(device_id, target) {
+            log::warn!("dpi shift failed: {e}");
+        }
+        if let Some(snap) = manager.snapshot(device_id) {
+            let _ = app.emit(commands::EVENT_DEVICE_UPDATED, snap);
+        }
+        return;
+    }
+    if !pressed {
+        return;
+    }
+    let next = match action {
+        Action::DpiUp => (current + 1).min(last),
+        Action::DpiDown => current.saturating_sub(1),
+        Action::DpiCycle => (current + 1) % (last + 1),
+        Action::DpiDefault => {
+            let default = manager.snapshot(device_id).and_then(|s| s.dpi).map(|d| d.default).unwrap_or(dp.dpi_stages[0]);
+            dp.dpi_stages.iter().enumerate().min_by_key(|(_, v)| v.abs_diff(default)).map(|(i, _)| i).unwrap_or(0)
+        }
+        _ => current,
+    };
+    if next == current && !matches!(action, Action::DpiDefault) {
+        return;
+    }
+    match manager.set_dpi(device_id, dp.dpi_stages[next]) {
+        Ok(_) => {
+            let id = device_id.to_string();
+            let pid = profile.id.clone();
+            let _ = store.update(|c| {
+                if let Some(p) = c.profiles.iter_mut().find(|p| p.id == pid) {
+                    if let Some(d) = p.devices.get_mut(&id) {
+                        d.active_stage = next;
+                    }
+                }
+            });
+            let _ = app.emit(commands::EVENT_CONFIG_CHANGED, store.get());
+            if let Some(snap) = manager.snapshot(device_id) {
+                let _ = app.emit(commands::EVENT_DEVICE_UPDATED, snap);
+            }
+        }
+        Err(e) => log::warn!("dpi action failed: {e}"),
+    }
+}
+
+/// Cycles to the next enabled profile, as G HUB's "profile cycle" does.
+fn next_profile(app: &tauri::AppHandle) {
+    let store = app.state::<Store>();
+    let cfg = store.get();
+    let enabled: Vec<&profiles::Profile> = cfg.profiles.iter().filter(|p| !p.disabled).collect();
+    if enabled.len() < 2 {
+        return;
+    }
+    let pos = enabled.iter().position(|p| p.id == cfg.active_profile).unwrap_or(0);
+    let next = enabled[(pos + 1) % enabled.len()].id.clone();
+    let _ = store.update(|c| c.active_profile = next);
+    let _ = app.emit(commands::EVENT_CONFIG_CHANGED, store.get());
+    apply_wheel_profiles(app);
+    apply_assignment_profiles(app);
 }
 
 /// Streams wheel inputs (steering, pedals, buttons) to the frontend at ~30 Hz

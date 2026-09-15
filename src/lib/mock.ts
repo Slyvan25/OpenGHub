@@ -336,6 +336,9 @@ export async function mockInvoke<T>(command: string, args: Record<string, unknow
     case "backup_onboard_memory":
       return "~/.local/share/openghub/backups/mock.json" as T;
 
+    case "apply_assignments":
+      return { software: true, onboard: (args.deviceId as string) === "demo-g502" } as T;
+
     case "get_wheel_state": {
       const t = Date.now() / 1000;
       return {

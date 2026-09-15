@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 use hidapi::HidDevice;
 use parking_lot::Mutex;
 
-use super::uinput::{self as ui, Effect, EffectKind, VirtualDevice};
+use crate::uinput::{self as ui, Effect, EffectKind, VirtualDevice};
 use super::{send_command, WheelModel, WheelSettings, WheelState};
 use crate::hidpp::{Error, Result};
 

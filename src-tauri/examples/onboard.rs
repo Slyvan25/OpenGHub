@@ -36,6 +36,8 @@ fn main() {
                             Button::Mouse { mask } => format!("mouse button {}", mask.trailing_zeros() + 1),
                             Button::Special { action } => format!("special action {action}"),
                             Button::Macro { sector, offset } => format!("macro @ sector {sector} +{offset}"),
+                            Button::Key { modifiers, usage } => format!("key usage {usage:#04x} modifiers {modifiers:#04x}"),
+                            Button::Consumer { usage } => format!("consumer usage {usage:#06x}"),
                             Button::Disabled => "disabled".into(),
                             Button::Raw { bytes } => format!("raw {bytes:02x?}"),
                         };

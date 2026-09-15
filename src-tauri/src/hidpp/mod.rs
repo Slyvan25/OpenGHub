@@ -314,7 +314,14 @@ pub struct Handle {
     unsupported: HashSet<u16>,
     /// Largest report the device accepted so far; long is the safe default.
     pub protocol_version: (u8, u8),
+    /// Unsolicited notifications (software id 0) seen while draining or
+    /// waiting for a reply — button spy reports, battery events. Consumed by
+    /// [`Handle::poll_events`].
+    events: std::collections::VecDeque<Packet>,
 }
+
+/// Notifications older than this are dropped rather than replayed late.
+const MAX_QUEUED_EVENTS: usize = 64;
 
 impl Handle {
     /// Opens the HID++ endpoint described by `address`.
@@ -329,6 +336,7 @@ impl Handle {
             feature_cache: HashMap::new(),
             unsupported: HashSet::new(),
             protocol_version: (0, 0),
+            events: std::collections::VecDeque::new(),
         };
         handle.protocol_version = handle.ping().unwrap_or((0, 0));
         Ok(handle)
@@ -473,6 +481,10 @@ impl Handle {
             if reply.device_index != request.device_index {
                 continue;
             }
+            if reply.is_notification() && !reply.is_error_reply() {
+                self.queue_if_event(&buf[..n]);
+                continue;
+            }
             if let Some(err) = reply.as_error() {
                 // Only claim the error if it refers to the request we just sent.
                 if reply.errored_feature_index() == request.feature_index
@@ -508,9 +520,28 @@ impl Handle {
         for _ in 0..32 {
             match self.device.read_timeout(&mut buf, 0) {
                 Ok(0) | Err(_) => break,
-                Ok(_) => continue,
+                Ok(n) => self.queue_if_event(&buf[..n]),
             }
         }
+    }
+
+    /// Keeps a notification for `poll_events`; replies and errors are not events.
+    fn queue_if_event(&mut self, raw: &[u8]) {
+        if let Some(p) = Packet::parse(raw) {
+            if p.is_notification() && !p.is_error_reply() && p.device_index == self.address.device_index {
+                if self.events.len() >= MAX_QUEUED_EVENTS {
+                    self.events.pop_front();
+                }
+                self.events.push_back(p);
+            }
+        }
+    }
+
+    /// Reads whatever the device has sent on its own and returns every queued
+    /// notification. Non-blocking.
+    pub fn poll_events(&mut self) -> Vec<Packet> {
+        self.drain();
+        self.events.drain(..).collect()
     }
 }
 
