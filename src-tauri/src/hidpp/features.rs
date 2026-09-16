@@ -40,6 +40,46 @@ pub mod device_name {
 pub mod device_info {
     pub const ID: u16 = 0x0003;
     pub const FN_GET_DEVICE_INFO: u8 = 0x00;
+    pub const FN_GET_FW_INFO: u8 = 0x01;
+}
+
+/// One firmware entity from `0x0003` `getFwInfo`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FirmwareInfo {
+    /// `main`, `bootloader`, `hardware`, `optical sensor`, … as G HUB labels them.
+    pub kind: String,
+    /// e.g. `MPM17.00_B0008` — prefix, BCD number.revision, build.
+    pub version: String,
+    pub active: bool,
+}
+
+/// Every firmware entity the device lists. Verified on a G502 LIGHTSPEED:
+/// `MPM17.00_B0008` (main, active) and `BOT92.00_B0008` (bootloader).
+pub fn read_firmware(h: &mut Handle) -> Result<Vec<FirmwareInfo>> {
+    let idx = h.feature_index(device_info::ID)?;
+    let count = h.call(idx, device_info::FN_GET_DEVICE_INFO, &[], ReportKind::Long)?.param(0);
+    let mut out = Vec::new();
+    for e in 0..count.min(8) {
+        let p = h.call(idx, device_info::FN_GET_FW_INFO, &[e], ReportKind::Long)?;
+        let kind = match p.param(0) {
+            0 => "main",
+            1 => "bootloader",
+            2 => "hardware",
+            3 => "touchpad",
+            4 => "optical sensor",
+            5 => "softdevice",
+            6 => "RF companion",
+            7 => "factory app",
+            8 => "RGB custom effect",
+            9 => "motor drive",
+            _ => "other",
+        };
+        let prefix: String = (1..4).map(|i| p.param(i)).filter(|c| c.is_ascii_graphic()).map(|c| c as char).collect();
+        let version = format!("{prefix}{:02x}.{:02x}_B{:04x}", p.param(4), p.param(5), p.param_u16(6));
+        out.push(FirmwareInfo { kind: kind.into(), version, active: p.param(8) & 1 == 1 });
+    }
+    Ok(out)
 }
 
 /// The device's own product ids, from `0x0003` `getDeviceInfo`.

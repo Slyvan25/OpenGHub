@@ -92,6 +92,7 @@ function makeDevice(
       : null,
     lightingZones: o.zones ?? 0,
     onboardMode: o.onboard ? false : null,
+    firmware: o.onboard ? [{ kind: "main", version: "MPM17.00_B0008", active: true }, { kind: "bootloader", version: "BOT92.00_B0008", active: false }] : [],
     wheel: o.wheel
       ? { rangeMin: 40, rangeMax: 900, rpmLeds: 5, protocol: "ClassicReport30", driverRunning: true, hardwareCalibration: false }
       : null,
@@ -164,6 +165,15 @@ function loadConfig(): Config {
 }
 
 let config = loadConfig();
+
+const mockDeviceSettings = {
+  autoSleepMin: 0,
+  inactivityLightingMin: 0,
+  lowBatteryMode: false,
+  lowBatteryThreshold: 15,
+  lowBatteryBrightness: 20,
+  leftHanded: false,
+};
 
 const mockWheel = {
   rangeDeg: 900,
@@ -336,6 +346,12 @@ export async function mockInvoke<T>(command: string, args: Record<string, unknow
 
     case "backup_onboard_memory":
       return "~/.local/share/openghub/backups/mock.json" as T;
+
+    case "get_device_settings":
+      return { ...mockDeviceSettings } as T;
+    case "set_device_settings":
+      Object.assign(mockDeviceSettings, args.settings as object);
+      return { ...mockDeviceSettings } as T;
 
     case "set_onboard_mode": {
       const d = device(args.deviceId as string);

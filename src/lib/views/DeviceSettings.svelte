@@ -7,7 +7,7 @@
   import { configStore } from "$lib/stores/config.svelte";
   import { deviceStore } from "$lib/stores/devices.svelte";
   import { ui } from "$lib/stores/ui.svelte";
-  import type { Device, FeatureInfo, WheelSettings } from "$lib/types";
+  import type { Device, DeviceSettings, FeatureInfo, WheelSettings } from "$lib/types";
 
   interface Props {
     device: Device;
@@ -27,6 +27,31 @@
       label: hz >= 1000 ? `${hz / 1000}K` : `${hz}`,
     })),
   );
+
+  // -- G HUB's device settings: power, low battery, button layout -------------
+  let ds = $state<DeviceSettings>({
+    autoSleepMin: 0,
+    inactivityLightingMin: 0,
+    lowBatteryMode: false,
+    lowBatteryThreshold: 15,
+    lowBatteryBrightness: 20,
+    leftHanded: false,
+  });
+  const SLEEP_OPTIONS = [0, 1, 2, 5, 10, 20, 30, 60];
+
+  $effect(() => {
+    api.getDeviceSettings(device.id).then((s) => (ds = s)).catch(() => {});
+  });
+
+  async function saveDs(patch: Partial<DeviceSettings>) {
+    const next = { ...ds, ...patch };
+    ds = next;
+    try {
+      ds = await api.setDeviceSettings(device.id, next);
+    } catch (e) {
+      ui.toast(api.errorMessage(e), "error", 6000);
+    }
+  }
 
   // -- wheels: centre calibration and the force-feedback driver ---------------
   type CalStep = "idle" | "start" | "finish";
@@ -198,6 +223,91 @@
     </ul>
   </section>
 
+  {#if device.firmware?.length}
+    <section class="card panel">
+      <h2 class="section-title">Firmware version</h2>
+      <dl class="facts">
+        {#each device.firmware as fw (fw.kind + fw.version)}
+          <div>
+            <dt>{fw.kind}{fw.active ? " · active" : ""}</dt>
+            <dd>{fw.version}</dd>
+          </div>
+        {/each}
+      </dl>
+    </section>
+  {/if}
+
+  {#if device.capabilities.onboardMemory}
+    <section class="card panel">
+      <h2 class="section-title">Power management</h2>
+      <p class="none">Stored in the device's onboard profile, so it applies with OpenGHub closed too.</p>
+      <div class="field-row">
+        <span class="field-label">Auto sleep after</span>
+        <div class="select">
+          <select value={ds.autoSleepMin} onchange={(e) => saveDs({ autoSleepMin: Number(e.currentTarget.value) })}>
+            {#each SLEEP_OPTIONS as m (m)}
+              <option value={m}>{m === 0 ? "Device default" : `${m} min`}</option>
+            {/each}
+          </select>
+          <Icon name="chevronDown" size={14} />
+        </div>
+      </div>
+      <div class="field-row">
+        <span class="field-label">Inactivity lighting off after</span>
+        <div class="select">
+          <select value={ds.inactivityLightingMin} onchange={(e) => saveDs({ inactivityLightingMin: Number(e.currentTarget.value) })}>
+            {#each SLEEP_OPTIONS as m (m)}
+              <option value={m}>{m === 0 ? "Device default" : `${m} min`}</option>
+            {/each}
+          </select>
+          <Icon name="chevronDown" size={14} />
+        </div>
+      </div>
+    </section>
+  {/if}
+
+  {#if device.capabilities.battery && device.capabilities.lighting}
+    <section class="card panel">
+      <h2 class="section-title">Low battery mode</h2>
+      <label class="check">
+        <input type="checkbox" checked={ds.lowBatteryMode} onchange={(e) => saveDs({ lowBatteryMode: e.currentTarget.checked })} />
+        <span>Dim the lighting when the battery runs low</span>
+      </label>
+      <div class="field-row">
+        <span class="field-label">Below</span>
+        <div class="select">
+          <select value={ds.lowBatteryThreshold} onchange={(e) => saveDs({ lowBatteryThreshold: Number(e.currentTarget.value) })}>
+            {#each [5, 10, 15, 20, 30] as t (t)}
+              <option value={t}>{t}%</option>
+            {/each}
+          </select>
+          <Icon name="chevronDown" size={14} />
+        </div>
+      </div>
+      <div class="field-row">
+        <span class="field-label">Lighting brightness</span>
+        <div class="select">
+          <select value={ds.lowBatteryBrightness} onchange={(e) => saveDs({ lowBatteryBrightness: Number(e.currentTarget.value) })}>
+            {#each [0, 10, 20, 30, 50] as b (b)}
+              <option value={b}>{b === 0 ? "Off" : `${b}%`}</option>
+            {/each}
+          </select>
+          <Icon name="chevronDown" size={14} />
+        </div>
+      </div>
+    </section>
+  {/if}
+
+  {#if device.kind === "mouse"}
+    <section class="card panel">
+      <h2 class="section-title">Button layout</h2>
+      <label class="check">
+        <input type="checkbox" checked={ds.leftHanded} onchange={(e) => saveDs({ leftHanded: e.currentTarget.checked })} />
+        <span>Left-handed: swap primary and secondary click</span>
+      </label>
+    </section>
+  {/if}
+
   {#if device.capabilities.onboardMemory}
     <section class="card panel">
       <h2 class="section-title">On-board memory mode</h2>
@@ -332,6 +442,49 @@
 {/if}
 
 <style>
+  .field-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .field-label {
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  .select {
+    position: relative;
+    display: flex;
+    align-items: center;
+    color: var(--text-dim);
+  }
+
+  .select select {
+    appearance: none;
+    height: 32px;
+    padding: 0 30px 0 12px;
+    border: none;
+    border-radius: 6px;
+    background: var(--surface-3);
+    font-family: var(--font);
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text);
+    cursor: pointer;
+  }
+
+  .select :global(svg) {
+    position: absolute;
+    right: 10px;
+    pointer-events: none;
+  }
+
+  .select option {
+    background: #161616;
+  }
+
   .wheel-actions {
     display: flex;
     flex-wrap: wrap;

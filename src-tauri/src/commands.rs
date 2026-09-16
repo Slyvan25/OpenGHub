@@ -567,6 +567,38 @@ pub async fn bind_profile_application(
 }
 
 // ---------------------------------------------------------------------------
+// Per-device settings (power, low battery, button layout)
+// ---------------------------------------------------------------------------
+
+use crate::profiles::DeviceSettings;
+
+#[tauri::command]
+pub async fn get_device_settings(store: State<'_, Store>, device_id: String) -> Result<DeviceSettings> {
+    Ok(store.get().settings.device_settings.get(&device_id).cloned().unwrap_or_default())
+}
+
+/// Stores the device settings and pushes them: timeouts into the onboard
+/// profile, the button layout through the assignment plan, low-battery mode
+/// to the battery poller.
+#[tauri::command]
+pub async fn set_device_settings(
+    app: AppHandle,
+    store: State<'_, Store>,
+    device_id: String,
+    settings: DeviceSettings,
+) -> Result<DeviceSettings> {
+    let id = device_id.clone();
+    let s = settings.clone();
+    store.update(move |cfg| {
+        cfg.settings.device_settings.insert(id, s);
+    })?;
+    crate::apply_device_settings(&app, Some(&device_id));
+    crate::apply_assignment_profiles(&app);
+    let _ = app.emit(EVENT_CONFIG_CHANGED, store.get());
+    Ok(settings)
+}
+
+// ---------------------------------------------------------------------------
 // G HUB settings.db import
 // ---------------------------------------------------------------------------
 

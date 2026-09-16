@@ -197,6 +197,7 @@ pub fn catalogue() -> Vec<DeviceSnapshot> {
             report_rate: s.rate,
             lighting_zones: s.zones,
             onboard_mode: if s.caps.onboard_memory { Some(false) } else { None },
+            firmware: vec![],
             wheel: None,
             protocol_version: "4.5".to_string(),
             demo: true,

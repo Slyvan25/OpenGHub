@@ -31,6 +31,7 @@ import type {
   WheelSettings,
   SoftwareEffect,
   LightSyncStatus,
+  DeviceSettings,
 } from "./types";
 
 export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -153,6 +154,13 @@ export const getDeviceProfile = (deviceId: string) =>
   call<DeviceProfile>("get_device_profile", { deviceId });
 export const saveSettings = (settings: Settings) => call<Config>("save_settings", { settings });
 export const getConfigPath = () => call<string>("get_config_path");
+
+// -- per-device settings ---------------------------------------------------
+
+export const getDeviceSettings = (deviceId: string) =>
+  call<DeviceSettings>("get_device_settings", { deviceId });
+export const setDeviceSettings = (deviceId: string, settings: DeviceSettings) =>
+  call<DeviceSettings>("set_device_settings", { deviceId, settings });
 
 // -- on-board memory mode & G HUB settings ---------------------------------
 

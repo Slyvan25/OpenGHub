@@ -566,6 +566,25 @@ pub fn write_leds(h: &mut Handle, profile_sector: u16, effects: &[(u8, u8, [u8; 
     write_sector(h, profile_sector, &profile)
 }
 
+/// Power-management words in the profile header (libratbag's profile v3
+/// layout): seconds of inactivity before the lighting goes to sleep, and
+/// before the device powers off. `0xffff` = firmware default.
+pub const POWERSAVE_OFFSET: usize = 28;
+pub const POWEROFF_OFFSET: usize = 30;
+
+/// Writes the inactivity timeouts (seconds; `None` = leave as is).
+pub fn write_power(h: &mut Handle, profile_sector: u16, powersave_s: Option<u16>, poweroff_s: Option<u16>, info: &OnboardInfo) -> Result<()> {
+    let size = info.sector_size as usize;
+    let mut profile = read_sector(h, profile_sector, size, true)?;
+    if let Some(v) = powersave_s {
+        profile[POWERSAVE_OFFSET..POWERSAVE_OFFSET + 2].copy_from_slice(&v.to_be_bytes());
+    }
+    if let Some(v) = poweroff_s {
+        profile[POWEROFF_OFFSET..POWEROFF_OFFSET + 2].copy_from_slice(&v.to_be_bytes());
+    }
+    write_sector(h, profile_sector, &profile)
+}
+
 /// Writes the DPI ladder, default / shift stage and report rate into the
 /// profile header (byte 0 report period ms, 1 default stage, 2 shift stage,
 /// 3.. five little-endian DPI values).

@@ -270,6 +270,17 @@ profile for editing but the device always receives the flattened sequence**. Lik
 recorded keystrokes, typed ASCII text and delays are what a device can play. "Use standard
 delays" replaces the recorded timing with a fixed gap when the macro is flattened.
 
+### Device settings
+
+The gear tab carries G HUB's per-device settings, kept outside the profiles
+(`settings.deviceSettings[deviceId]`): **firmware version** from `0x0003 getFwInfo` (main
+`MPM17.00_B0008` and bootloader `BOT92.00_B0008` on the G502), **power management** — the
+auto-sleep and inactivity-lighting timeouts written into the onboard profile's header words at
+offsets 28/30 (seconds, big-endian, `0xffff` = firmware default) — a software **low-battery
+mode** that dims the profile's lighting below a threshold and restores it once charged past it,
+and the **left-handed** layout, which swaps the two clicks through the assignment plan (and
+therefore the onboard table too).
+
 ### G-Shift
 
 Assign *Actions → G-Shift* to a button and flip the DEFAULT / G-SHIFT switch under the render

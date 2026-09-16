@@ -57,6 +57,22 @@ export interface Capabilities {
   wheel?: boolean;
 }
 
+export interface FirmwareInfo {
+  kind: string;
+  version: string;
+  active: boolean;
+}
+
+/** G HUB's per-device settings, outside the profiles. */
+export interface DeviceSettings {
+  autoSleepMin: number;
+  inactivityLightingMin: number;
+  lowBatteryMode: boolean;
+  lowBatteryThreshold: number;
+  lowBatteryBrightness: number;
+  leftHanded: boolean;
+}
+
 /** Static facts about a wheel. */
 export interface WheelInfo {
   rangeMin: number;
@@ -109,6 +125,7 @@ export interface Device {
   lightingZones: number;
   /** true = running its onboard profile; null for devices without one. */
   onboardMode?: boolean | null;
+  firmware?: FirmwareInfo[];
   wheel?: WheelInfo | null;
   protocolVersion: string;
   demo: boolean;

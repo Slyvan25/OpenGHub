@@ -215,6 +215,37 @@ pub struct Settings {
     /// them live.
     #[serde(default)]
     pub onboard_mode_devices: Vec<String>,
+    /// Per-device settings that are not part of a profile (G HUB's device
+    /// settings screen): power management, low-battery mode, button layout.
+    #[serde(default)]
+    pub device_settings: std::collections::HashMap<String, DeviceSettings>,
+}
+
+/// G HUB's per-device settings, kept outside the profiles.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceSettings {
+    /// Minutes of inactivity before the device powers off; 0 = never / default.
+    #[serde(default)]
+    pub auto_sleep_min: u16,
+    /// Minutes of inactivity before the lighting goes to sleep; 0 = default.
+    #[serde(default)]
+    pub inactivity_lighting_min: u16,
+    /// Dim the lighting when the battery drops to `low_battery_threshold`.
+    #[serde(default)]
+    pub low_battery_mode: bool,
+    #[serde(default = "default_low_threshold")]
+    pub low_battery_threshold: u8,
+    /// Brightness (0-100) used while in low-battery mode.
+    #[serde(default)]
+    pub low_battery_brightness: u8,
+    /// Swap primary and secondary click.
+    #[serde(default)]
+    pub left_handed: bool,
+}
+
+fn default_low_threshold() -> u8 {
+    15
 }
 
 fn default_community_repo() -> String {
@@ -247,6 +278,7 @@ impl Default for Settings {
             wheel_driver: true,
             screen_restore_token: None,
             onboard_mode_devices: Vec::new(),
+            device_settings: Default::default(),
         }
     }
 }

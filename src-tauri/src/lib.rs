@@ -90,6 +90,8 @@ pub fn run() {
             commands::export_profile,
             commands::apply_assignments,
             commands::import_ghub_settings,
+            commands::get_device_settings,
+            commands::set_device_settings,
             commands::set_onboard_mode,
             commands::set_zone_software_effect,
             commands::get_lightsync_status,
@@ -310,6 +312,26 @@ pub fn apply_wheel_profiles(app: &tauri::AppHandle) {
     }
 }
 
+/// Writes each device's power timeouts into its onboard profile. `only`
+/// limits it to one device.
+pub fn apply_device_settings(app: &tauri::AppHandle, only: Option<&str>) {
+    let manager = app.state::<DeviceManager>();
+    let store = app.state::<Store>();
+    let cfg = store.get();
+    for snap in manager.snapshots() {
+        if snap.demo || !snap.online || !snap.capabilities.onboard_memory {
+            continue;
+        }
+        if only.is_some_and(|o| o != snap.id) {
+            continue;
+        }
+        let Some(ds) = cfg.settings.device_settings.get(&snap.id) else { continue };
+        if let Err(e) = manager.write_onboard_power(&snap.id, ds.inactivity_lighting_min, ds.auto_sleep_min) {
+            log::warn!("{}: power settings not written: {e}", snap.name);
+        }
+    }
+}
+
 /// Pushes the active profile's button assignments to every connected device.
 pub fn apply_assignment_profiles(app: &tauri::AppHandle) {
     let manager = app.state::<DeviceManager>();
@@ -321,7 +343,20 @@ pub fn apply_assignment_profiles(app: &tauri::AppHandle) {
             continue;
         }
         let dp = active.and_then(|p| p.devices.get(&snap.id));
-        let assignments = dp.map(|d| d.assignments.clone()).unwrap_or_default();
+        let mut assignments = dp.map(|d| d.assignments.clone()).unwrap_or_default();
+        // Left-handed layout: swap the two clicks unless the profile says otherwise.
+        if cfg.settings.device_settings.get(&snap.id).map(|d| d.left_handed).unwrap_or(false) {
+            for (control, value, label) in [("button-1", "mouse-right", "Secondary Click"), ("button-2", "mouse-left", "Primary Click")] {
+                if !assignments.iter().any(|a| a.control == control) {
+                    assignments.push(profiles::Assignment {
+                        control: control.into(),
+                        category: "action".into(),
+                        label: label.into(),
+                        value: value.into(),
+                    });
+                }
+            }
+        }
         let macros = dp.map(|d| d.macros.clone()).unwrap_or_default();
         match manager.apply_assignments(&snap.id, &assignments, &macros) {
             Ok(r) if r.software || r.onboard => log::info!(
@@ -470,6 +505,7 @@ fn next_profile(app: &tauri::AppHandle) {
 pub fn apply_all_profiles(app: &tauri::AppHandle) {
     apply_wheel_profiles(app);
     apply_onboard_modes(app);
+    apply_device_settings(app, None);
     apply_assignment_profiles(app);
     apply_lighting_profiles(app);
     for id in app.state::<Store>().get().settings.onboard_mode_devices.clone() {
@@ -560,6 +596,61 @@ pub fn apply_lighting_profiles(app: &tauri::AppHandle) {
     sync.set_effects(table);
 }
 
+/// G HUB's low-battery mode: below the threshold the lighting is dimmed to
+/// the configured brightness; once charged past it (with a little
+/// hysteresis) the profile's lighting comes back.
+fn low_battery_check(app: &tauri::AppHandle, device_id: &str, percentage: u8, dimmed: &mut std::collections::HashSet<String>) {
+    let store = app.state::<Store>();
+    let cfg = store.get();
+    let Some(ds) = cfg.settings.device_settings.get(device_id) else { return };
+    if !ds.low_battery_mode {
+        if dimmed.remove(device_id) {
+            write_profile_lighting(app, device_id, None);
+        }
+        return;
+    }
+    let is_dimmed = dimmed.contains(device_id);
+    if percentage <= ds.low_battery_threshold && !is_dimmed {
+        log::info!("{device_id}: battery {percentage}% — low-battery mode dims the lighting");
+        write_profile_lighting(app, device_id, Some(ds.low_battery_brightness));
+        dimmed.insert(device_id.to_string());
+    } else if percentage > ds.low_battery_threshold.saturating_add(5) && is_dimmed {
+        write_profile_lighting(app, device_id, None);
+        dimmed.remove(device_id);
+    }
+}
+
+/// Re-applies the active profile's lighting to a device, optionally with the
+/// brightness capped (low-battery mode). RAM only.
+fn write_profile_lighting(app: &tauri::AppHandle, device_id: &str, cap: Option<u8>) {
+    let manager = app.state::<DeviceManager>();
+    let store = app.state::<Store>();
+    let cfg = store.get();
+    let Some(dp) = cfg.profiles.iter().find(|p| p.id == cfg.active_profile).and_then(|p| p.devices.get(device_id)) else {
+        return;
+    };
+    for (zone, l) in &dp.lighting_zones {
+        let Ok(z) = zone.parse::<u8>() else { continue };
+        let brightness = cap.map(|c| c.min(l.brightness)).unwrap_or(l.brightness);
+        let mut rgb = crate::lightsync::parse_hex(&l.color);
+        let fx = match l.effect.as_str() {
+            "off" => hidpp::features::LightEffect::Off,
+            "breathing" => hidpp::features::LightEffect::Breathing { rate_ms: l.rate_ms, brightness },
+            "cycle" => hidpp::features::LightEffect::Cycle { rate_ms: l.rate_ms, brightness },
+            _ => {
+                // Fixed (and software effects): scale the colour itself.
+                for c in rgb.iter_mut() {
+                    *c = (*c as u32 * brightness as u32 / 100) as u8;
+                }
+                hidpp::features::LightEffect::Fixed
+            }
+        };
+        if let Err(e) = manager.set_lighting(device_id, z, rgb, fx, false) {
+            log::debug!("{device_id} zone {z}: lighting not written: {e}");
+        }
+    }
+}
+
 /// Streams wheel inputs (steering, pedals, buttons) to the frontend at ~30 Hz
 /// while they change, for the Steering Wheel page's live gauge.
 fn spawn_wheel_telemetry(app: tauri::AppHandle) {
@@ -590,6 +681,8 @@ fn spawn_wheel_telemetry(app: tauri::AppHandle) {
 /// the frontend. Runs on a blocking thread because hidapi I/O is synchronous.
 fn spawn_battery_poller(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
+        // Devices currently dimmed by low-battery mode.
+        let mut dimmed: std::collections::HashSet<String> = Default::default();
         loop {
             let interval = {
                 let store = app.state::<Store>();
@@ -608,6 +701,7 @@ fn spawn_battery_poller(app: tauri::AppHandle) {
             match events {
                 Ok(events) => {
                     for (device_id, battery) in events {
+                        low_battery_check(&app, &device_id, battery.percentage, &mut dimmed);
                         let _ = app.emit(EVENT_BATTERY, BatteryEvent { device_id, battery });
                     }
                 }

@@ -78,6 +78,9 @@ pub struct DeviceSnapshot {
     /// last read; `None` for devices without onboard profiles.
     #[serde(default)]
     pub onboard_mode: Option<bool>,
+    /// Firmware entities from `0x0003`, read once at discovery.
+    #[serde(default)]
+    pub firmware: Vec<features::FirmwareInfo>,
     #[serde(default)]
     pub wheel: Option<WheelInfo>,
     pub protocol_version: String,
@@ -105,6 +108,7 @@ impl DeviceSnapshot {
             report_rate: None,
             lighting_zones: 0,
             onboard_mode: None,
+            firmware: Vec::new(),
             wheel: None,
             protocol_version: String::new(),
             demo: false,
@@ -417,6 +421,20 @@ impl DeviceManager {
             })
             .collect();
         self.with_onboard_profile(&mut inner, id, |h, sector, _, info| onboard::write_leds(h, sector, &effects, info))?;
+        inner.with_handle(id, reload_onboard_profile)
+    }
+
+    /// Writes the inactivity timeouts (minutes) into the onboard profile.
+    pub fn write_onboard_power(&self, id: &str, inactivity_lighting_min: u16, auto_sleep_min: u16) -> Result<()> {
+        use crate::hidpp::onboard;
+        let mut inner = self.inner.lock();
+        if inner.demo {
+            return Ok(());
+        }
+        let secs = |m: u16| if m == 0 { 0xffffu16 } else { (m as u32 * 60).min(0xfffe) as u16 };
+        self.with_onboard_profile(&mut inner, id, |h, sector, _, info| {
+            onboard::write_power(h, sector, Some(secs(inactivity_lighting_min)), Some(secs(auto_sleep_min)), info)
+        })?;
         inner.with_handle(id, reload_onboard_profile)
     }
 
@@ -1274,6 +1292,9 @@ fn probe(handle: &mut Handle, snapshot: &mut DeviceSnapshot, endpoint: &hidpp::E
     };
     let (major, minor) = handle.protocol_version;
     snapshot.protocol_version = format!("{major}.{minor}");
+    if snapshot.firmware.is_empty() {
+        snapshot.firmware = features::read_firmware(handle).unwrap_or_default();
+    }
     snapshot.online = true;
     snapshot.demo = false;
 
