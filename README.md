@@ -270,6 +270,16 @@ profile for editing but the device always receives the flattened sequence**. Lik
 recorded keystrokes, typed ASCII text and delays are what a device can play. "Use standard
 delays" replaces the recorded timing with a fixed gap when the macro is flattened.
 
+### G-Shift
+
+Assign *Actions → G-Shift* to a button and flip the DEFAULT / G-SHIFT switch under the render
+to bind the second layer (stored as `button-N:gshift`). In software mode the button pump keeps
+a second `0x8110` remapping table and loads it while G-Shift is held, so the device's own
+actions follow the layer too; each press remembers the layer it was resolved in so a release
+never sticks a key. In onboard mode the layer is written to the profile's second button table
+at offset 96 (unassigned = `ff`, as the factory table has it), with the shift button itself as
+special `0x0b`.
+
 ### On-board memory mode
 
 G HUB's card button. Off (default), OpenGHub drives the mouse live: host mode, software

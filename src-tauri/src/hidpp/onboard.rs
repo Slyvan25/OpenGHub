@@ -231,6 +231,13 @@ impl Button {
 
 /// Offset of the button descriptor table within a profile sector.
 pub const BUTTONS_OFFSET: usize = 32;
+/// Offset of the G-Shift layer's button table (same 16 × 4-byte layout).
+pub const GSHIFT_OFFSET: usize = 96;
+
+/// Where a button descriptor lives for a layer.
+pub const fn button_offset(index: u8, shifted: bool) -> usize {
+    (if shifted { GSHIFT_OFFSET } else { BUTTONS_OFFSET }) + index as usize * 4
+}
 
 /// A decoded profile. Only the fields OpenGHub understands are broken out; the
 /// raw sector is kept so a write can preserve everything else untouched.
@@ -441,6 +448,9 @@ pub struct MacroAssignment {
     /// Zero-based button index within the profile.
     pub button: u8,
     pub steps: Vec<MacroStep>,
+    /// Bind in the G-Shift layer's table instead of the base one.
+    #[serde(default)]
+    pub shifted: bool,
 }
 
 /// Which sector holds the macros for a given profile.
@@ -472,7 +482,7 @@ pub fn apply_macros(
     // Lay the macros out back to back, remembering where each one starts.
     let mut macro_bytes = vec![0xffu8; size];
     let mut cursor = 0usize;
-    let mut offsets: Vec<(u8, u16)> = Vec::with_capacity(assignments.len());
+    let mut offsets: Vec<(u8, bool, u16)> = Vec::with_capacity(assignments.len());
 
     for assignment in assignments {
         let encoded = encode_macro(&assignment.steps);
@@ -483,7 +493,7 @@ pub fn apply_macros(
             )));
         }
         macro_bytes[cursor..cursor + encoded.len()].copy_from_slice(&encoded);
-        offsets.push((assignment.button, cursor as u16));
+        offsets.push((assignment.button, assignment.shifted, cursor as u16));
         cursor += encoded.len();
     }
 
@@ -491,8 +501,8 @@ pub fn apply_macros(
     write_sector(h, macro_sector, &macro_bytes)?;
 
     let mut profile = read_sector(h, profile_sector, size, true)?;
-    for (button, offset) in offsets {
-        let at = BUTTONS_OFFSET + button as usize * 4;
+    for (button, shifted, offset) in offsets {
+        let at = button_offset(button, shifted);
         if at + 4 > usable {
             return Err(Error::other(format!("button {button} is outside the profile sector")));
         }
@@ -510,7 +520,7 @@ pub fn apply_buttons(
     h: &mut Handle,
     profile_sector: u16,
     macro_sector: u16,
-    buttons: &[(u8, Button)],
+    buttons: &[(u8, bool, Button)],
     macros: &[MacroAssignment],
     info: &OnboardInfo,
 ) -> Result<()> {
@@ -521,8 +531,8 @@ pub fn apply_buttons(
     let size = info.sector_size as usize;
     let usable = size - 2;
     let mut profile = read_sector(h, profile_sector, size, true)?;
-    for (button, descriptor) in buttons {
-        let at = BUTTONS_OFFSET + *button as usize * 4;
+    for (button, shifted, descriptor) in buttons {
+        let at = button_offset(*button, *shifted);
         if at + 4 > usable {
             return Err(Error::other(format!("button {button} is outside the profile sector")));
         }

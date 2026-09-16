@@ -121,6 +121,7 @@
         { category: "action", label: "DPI down", value: "dpi-down" },
         { category: "action", label: "DPI cycle", value: "dpi-cycle" },
         { category: "action", label: "DPI shift", value: "dpi-shift" },
+        { category: "action", label: "G-Shift", value: "gshift" },
         { category: "action", label: "Next profile", value: "profile-next" },
         { category: "action", label: "Back", value: "mouse-back" },
         { category: "action", label: "Forward", value: "mouse-forward" },

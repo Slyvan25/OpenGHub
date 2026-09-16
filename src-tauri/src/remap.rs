@@ -37,6 +37,8 @@ pub enum Action {
     DpiShift,
     DpiDefault,
     ProfileNext,
+    /// Hold to use the G-Shift layer's assignments.
+    GShift,
     /// Play these steps once per press.
     Macro(Vec<MacroStep>),
     LockScreen,
@@ -78,6 +80,7 @@ impl Action {
             Action::DpiDefault => Button::Special { action: 0x06 },
             Action::DpiShift => Button::Special { action: 0x07 },
             Action::ProfileNext => Button::Special { action: 0x0a },
+            Action::GShift => Button::Special { action: 0x0b },
             Action::Macro(_) => {
                 let (sector, offset) = macro_slot?;
                 Button::Macro { sector, offset }
@@ -106,6 +109,7 @@ pub fn action_for(a: &Assignment, macros: &[MacroDef]) -> Option<Action> {
             "dpi-shift" => Action::DpiShift,
             "dpi-default" => Action::DpiDefault,
             "profile-next" => Action::ProfileNext,
+            "gshift" | "g-shift" => Action::GShift,
             "mouse-back" => Action::MouseButton(4),
             "mouse-forward" => Action::MouseButton(5),
             "mouse-left" => Action::MouseButton(1),
@@ -135,10 +139,19 @@ pub fn action_for(a: &Assignment, macros: &[MacroDef]) -> Option<Action> {
 pub struct Plan {
     /// Button index → action, for buttons the app handles itself.
     pub actions: HashMap<u8, Action>,
+    /// The same for the G-Shift layer.
+    pub shift_actions: HashMap<u8, Action>,
     /// The `0x8110` remapping table (16 entries; 0 = no HID action).
     pub remapping: [u8; 16],
+    /// The table to load while G-Shift is held.
+    pub shift_remapping: [u8; 16],
     /// Buttons currently pressed, from the last spy report.
     pub pressed: u16,
+    /// G-Shift is held.
+    pub shift_held: bool,
+    /// Which layer each pressed button was resolved in, so its release runs
+    /// the same action even if the layer changed meanwhile.
+    pub pressed_in_shift: u16,
 }
 
 impl Plan {
@@ -148,18 +161,28 @@ impl Plan {
         for i in 0..16u8 {
             plan.remapping[i as usize] = if i < button_count { i + 1 } else { 0 };
         }
+        plan.shift_remapping = plan.remapping;
         for a in assignments {
-            // G-shift layer bindings are stored but not driven yet.
-            if a.control.contains(':') {
-                continue;
-            }
+            let shifted = a.control.contains(":gshift");
             let Some(index) = button_index(&a.control) else { continue };
             let Some(action) = action_for(a, macros) else { continue };
+            let (table, actions) = if shifted {
+                (&mut plan.shift_remapping, &mut plan.shift_actions)
+            } else {
+                (&mut plan.remapping, &mut plan.actions)
+            };
             if index < 16 {
-                plan.remapping[index as usize] = action.keeps_device_button().unwrap_or(0);
+                table[index as usize] = action.keeps_device_button().unwrap_or(0);
             }
             if action.keeps_device_button().is_none() {
-                plan.actions.insert(index, action);
+                actions.insert(index, action);
+            }
+        }
+        // The G-Shift button itself is silent in both layers.
+        for (i, a) in plan.actions.clone() {
+            if a == Action::GShift && (i as usize) < 16 {
+                plan.shift_remapping[i as usize] = 0;
+                plan.shift_actions.insert(i, Action::GShift);
             }
         }
         // Never leave a mouse without a primary click: if nothing emits
@@ -169,12 +192,20 @@ impl Plan {
             plan.remapping[0] = 1;
             plan.actions.remove(&0);
         }
+        if button_count > 0 && !plan.shift_remapping[..button_count as usize].contains(&1) {
+            plan.shift_remapping[0] = 1;
+            plan.shift_actions.remove(&0);
+        }
         plan
     }
 
     /// True when at least one button needs the spy.
     pub fn needs_spy(&self) -> bool {
-        !self.actions.is_empty()
+        !self.actions.is_empty() || !self.shift_actions.is_empty()
+    }
+
+    pub fn has_gshift(&self) -> bool {
+        self.actions.values().any(|a| *a == Action::GShift)
     }
 
     /// Updates the pressed mask and returns the transitions as (button, pressed).
@@ -182,6 +213,23 @@ impl Plan {
         let changed = self.pressed ^ mask;
         self.pressed = mask;
         (0..16u8).filter(|b| changed & (1 << b) != 0).map(|b| (b, mask & (1 << b) != 0)).collect()
+    }
+
+    /// Resolves an edge to its action, honouring the layer it was pressed in.
+    pub fn resolve(&mut self, button: u8, pressed: bool) -> Option<Action> {
+        let bit = 1u16 << button;
+        let shifted = if pressed {
+            if self.shift_held {
+                self.pressed_in_shift |= bit;
+            } else {
+                self.pressed_in_shift &= !bit;
+            }
+            self.shift_held
+        } else {
+            self.pressed_in_shift & bit != 0
+        };
+        let table = if shifted { &self.shift_actions } else { &self.actions };
+        table.get(&button).cloned()
     }
 }
 
@@ -340,10 +388,24 @@ mod tests {
     }
 
     #[test]
-    fn gshift_layer_is_ignored_for_now() {
-        let plan = Plan::build(&[a("button-4:gshift", "command", "ctrl+c")], &[], 11);
-        assert!(plan.actions.is_empty());
-        assert_eq!(plan.remapping[3], 4);
+    fn gshift_layer_has_its_own_table() {
+        let mut plan = Plan::build(
+            &[a("button-6", "action", "gshift"), a("button-4:gshift", "command", "ctrl+c"), a("button-4", "action", "dpi-up")],
+            &[],
+            11,
+        );
+        assert_eq!(plan.remapping[5], 0, "the shift button is silent");
+        assert_eq!(plan.shift_remapping[5], 0);
+        assert_eq!(plan.remapping[3], 0);
+        assert_eq!(plan.shift_remapping[3], 0);
+        assert!(plan.has_gshift());
+        // Base layer press resolves to DPI up; with shift held, to the chord.
+        assert_eq!(plan.resolve(3, true), Some(Action::DpiUp));
+        assert_eq!(plan.resolve(3, false), Some(Action::DpiUp));
+        plan.shift_held = true;
+        assert_eq!(plan.resolve(3, true), Some(Action::Keys(vec![keymap::KEY_LEFTCTRL, 46])));
+        plan.shift_held = false;
+        assert_eq!(plan.resolve(3, false), Some(Action::Keys(vec![keymap::KEY_LEFTCTRL, 46])), "release follows the press layer");
     }
 
     #[test]

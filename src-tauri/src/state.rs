@@ -537,27 +537,27 @@ impl DeviceManager {
                 // across profiles (a left click pointing at a dead macro).
                 let count = info.button_count as usize;
                 let factory = factory_buttons(product_id, count);
-                let mut buttons: Vec<(u8, onboard::Button)> = Vec::new();
+                let mut buttons: Vec<(u8, bool, onboard::Button)> = Vec::new();
                 let mut macro_assignments: Vec<onboard::MacroAssignment> = Vec::new();
                 let mut covered = vec![false; count];
+                let mut covered_shift = vec![false; count];
                 for a in assignments {
-                    if a.control.contains(':') {
-                        continue;
-                    }
+                    let shifted = a.control.contains(":gshift");
                     let Some(index) = remap::button_index(&a.control) else { continue };
                     let Some(action) = remap::action_for(a, macros) else { continue };
                     if (index as usize) >= count {
                         continue;
                     }
+                    let done = if shifted { &mut covered_shift } else { &mut covered };
                     match action {
                         Action::Macro(steps) => {
-                            macro_assignments.push(onboard::MacroAssignment { button: index, steps });
-                            covered[index as usize] = true;
+                            macro_assignments.push(onboard::MacroAssignment { button: index, steps, shifted });
+                            done[index as usize] = true;
                         }
                         other => {
                             if let Some(b) = other.onboard_button(None) {
-                                buttons.push((index, b));
-                                covered[index as usize] = true;
+                                buttons.push((index, shifted, b));
+                                done[index as usize] = true;
                             }
                         }
                     }
@@ -565,16 +565,22 @@ impl DeviceManager {
                 for (i, done) in covered.iter().enumerate() {
                     if !done {
                         if let Some(b) = factory.get(i) {
-                            buttons.push((i as u8, *b));
+                            buttons.push((i as u8, false, *b));
                         }
                     }
                 }
+                // The G-Shift layer defaults to "unassigned", as the factory table has it.
+                for (i, done) in covered_shift.iter().enumerate() {
+                    if !done {
+                        buttons.push((i as u8, true, onboard::Button::Disabled));
+                    }
+                }
                 // Same guard as the software plan: something must be the left click.
-                let has_primary = buttons.iter().any(|(_, b)| matches!(b, onboard::Button::Mouse { mask: 1 }));
+                let has_primary = buttons.iter().any(|(_, sh, b)| !sh && matches!(b, onboard::Button::Mouse { mask: 1 }));
                 if !has_primary && count > 0 {
-                    buttons.retain(|(i, _)| *i != 0);
-                    macro_assignments.retain(|m| m.button != 0);
-                    buttons.push((0, onboard::Button::Mouse { mask: 1 }));
+                    buttons.retain(|(i, sh, _)| *sh || *i != 0);
+                    macro_assignments.retain(|m| m.shifted || m.button != 0);
+                    buttons.push((0, false, onboard::Button::Mouse { mask: 1 }));
                 }
                 onboard::apply_buttons(h, sector, macro_sector, &buttons, &macro_assignments, &info)
             });
@@ -607,14 +613,28 @@ impl DeviceManager {
                     None => continue,
                 };
                 // Several reports may have queued; replay every edge in order.
-                let plan = inner.plans.get_mut(&id).expect("plan");
-                for ev in events {
-                    if let Some(mask) = features::spy_event_mask(&ev, spy) {
-                        for (button, pressed) in plan.transitions(mask) {
-                            if let Some(action) = plan.actions.get(&button) {
-                                out.push(ButtonEvent { device_id: id.clone(), button, pressed, action: action.clone() });
+                let mut swap: Option<[u8; 16]> = None;
+                {
+                    let plan = inner.plans.get_mut(&id).expect("plan");
+                    for ev in events {
+                        if let Some(mask) = features::spy_event_mask(&ev, spy) {
+                            for (button, pressed) in plan.transitions(mask) {
+                                let Some(action) = plan.resolve(button, pressed) else { continue };
+                                if action == Action::GShift {
+                                    plan.shift_held = pressed;
+                                    swap = Some(if pressed { plan.shift_remapping } else { plan.remapping });
+                                    continue;
+                                }
+                                out.push(ButtonEvent { device_id: id.clone(), button, pressed, action });
                             }
                         }
+                    }
+                }
+                // G-Shift held: the device loads the layer's table so its own
+                // HID actions follow the layer too.
+                if let Some(table) = swap {
+                    if let Err(e) = inner.with_handle(&id, |h| features::write_remapping(h, &table)) {
+                        log::debug!("gshift table swap failed: {e}");
                     }
                 }
                 None
@@ -624,9 +644,12 @@ impl DeviceManager {
             if let Some(mask) = mask {
                 let plan = inner.plans.get_mut(&id).expect("plan");
                 for (button, pressed) in plan.transitions(mask) {
-                    if let Some(action) = plan.actions.get(&button) {
-                        out.push(ButtonEvent { device_id: id.clone(), button, pressed, action: action.clone() });
+                    let Some(action) = plan.resolve(button, pressed) else { continue };
+                    if action == Action::GShift {
+                        plan.shift_held = pressed;
+                        continue;
                     }
+                    out.push(ButtonEvent { device_id: id.clone(), button, pressed, action });
                 }
             }
         }

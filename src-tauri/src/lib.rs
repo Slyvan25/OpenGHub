@@ -381,7 +381,7 @@ fn perform(app: &tauri::AppHandle, ev: state::ButtonEvent) {
             }
             Ok(())
         }
-        Action::Disabled => Ok(()),
+        Action::GShift | Action::Disabled => Ok(()),
     };
     if let Err(e) = result {
         log::warn!("assignment on {} button {} failed: {e}", ev.device_id, ev.button + 1);
