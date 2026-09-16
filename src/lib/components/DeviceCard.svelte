@@ -1,6 +1,9 @@
 <script lang="ts">
   /** A dashboard tile: name, status row, artwork and the quick-action buttons. */
   import { goto } from "$app/navigation";
+  import * as api from "$lib/api";
+  import { deviceStore } from "$lib/stores/devices.svelte";
+  import { ui } from "$lib/stores/ui.svelte";
   import type { Device } from "$lib/types";
   import { artworkIds, batteryIcon, connectionIcon, defaultTab, kindIcon } from "$lib/device-ui";
   import DeviceArt, { type ZoneGlow } from "./DeviceArt.svelte";
@@ -18,10 +21,31 @@
   let { device, glow = null, brightness = 100, zones = [] }: Props = $props();
 
   /**
-   * G HUB's cards carry one button, bottom right: onboard memory mode. Its
-   * settings live on the device's settings tab here.
+   * G HUB's cards carry one button, bottom right: the on-board memory mode
+   * toggle. Devices without onboard profiles get a shortcut to their settings.
    */
   const settingsHref = $derived(`/device/${device.id}/settings`);
+  let switching = $state(false);
+
+  async function toggleOnboard(event: MouseEvent) {
+    event.stopPropagation();
+    if (!device.capabilities.onboardMemory) {
+      goto(settingsHref);
+      return;
+    }
+    if (switching) return;
+    switching = true;
+    const on = !device.onboardMode;
+    try {
+      const updated = await api.setOnboardMode(device.id, on);
+      deviceStore.patch(updated);
+      ui.toast(on ? `${device.name}: on-board memory mode on — the profile is stored on the device.` : `${device.name}: on-board memory mode off.`, "success", 3500);
+    } catch (e) {
+      ui.toast(api.errorMessage(e), "error", 6000);
+    } finally {
+      switching = false;
+    }
+  }
 
   function open() {
     goto(`/device/${device.id}/${defaultTab(device)}`);
@@ -84,11 +108,15 @@
   <footer>
     <button
       class="action"
-      title={device.capabilities.onboardMemory ? "Onboard memory mode" : "Device settings"}
-      aria-label={device.capabilities.onboardMemory ? "Onboard memory mode" : "Device settings"}
-      onclick={(e) => openAction(e, settingsHref)}
+      class:on={device.onboardMode === true}
+      title={device.capabilities.onboardMemory
+        ? `On-board memory mode: ${device.onboardMode ? "on" : "off"}`
+        : "Device settings"}
+      aria-label={device.capabilities.onboardMemory ? "Toggle on-board memory mode" : "Device settings"}
+      disabled={switching}
+      onclick={toggleOnboard}
     >
-      <Icon name={device.capabilities.onboardMemory ? "onboardOff" : "gear"} size={20} strokeWidth={1.6} />
+      <Icon name={device.capabilities.onboardMemory ? (device.onboardMode ? "chip" : "onboardOff") : "gear"} size={20} strokeWidth={1.6} />
     </button>
   </footer>
 
@@ -200,6 +228,11 @@
   .action:hover {
     background: var(--surface-3);
     color: var(--text);
+  }
+
+  .action.on {
+    background: var(--accent);
+    color: #fff;
   }
 
   .badge {

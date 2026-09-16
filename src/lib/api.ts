@@ -29,6 +29,8 @@ import type {
   Game,
   WheelState,
   WheelSettings,
+  SoftwareEffect,
+  LightSyncStatus,
 } from "./types";
 
 export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -151,6 +153,25 @@ export const getDeviceProfile = (deviceId: string) =>
   call<DeviceProfile>("get_device_profile", { deviceId });
 export const saveSettings = (settings: Settings) => call<Config>("save_settings", { settings });
 export const getConfigPath = () => call<string>("get_config_path");
+
+// -- on-board memory mode & G HUB settings ---------------------------------
+
+export const setOnboardMode = (deviceId: string, on: boolean) =>
+  call<Device>("set_onboard_mode", { deviceId, on });
+
+export interface GhubImportSummary {
+  profiles: string[];
+  devices: string[];
+  skipped: string[];
+}
+export const importGhubSettings = (path: string) =>
+  call<GhubImportSummary>("import_ghub_settings", { path });
+
+// -- software lighting -----------------------------------------------------
+
+export const setZoneSoftwareEffect = (deviceId: string, zone: number, effect: SoftwareEffect | null) =>
+  call<void>("set_zone_software_effect", { deviceId, zone, effect });
+export const getLightSyncStatus = () => call<LightSyncStatus>("get_lightsync_status");
 
 // -- assignments -----------------------------------------------------------
 

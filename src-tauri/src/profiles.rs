@@ -16,12 +16,15 @@ use crate::hidpp::Error;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LightingSettings {
-    /// `off` | `fixed` | `breathing` | `cycle`
+    /// `off` | `fixed` | `breathing` | `cycle` | `screen` | `audio`
     pub effect: String,
     /// `#rrggbb`
     pub color: String,
     pub brightness: u8,
     pub rate_ms: u16,
+    /// Parameters of a software effect (`screen` / `audio`), run by the app.
+    #[serde(default)]
+    pub software: Option<crate::lightsync::SoftwareEffect>,
 }
 
 impl Default for LightingSettings {
@@ -31,6 +34,7 @@ impl Default for LightingSettings {
             color: "#00b8fc".into(),
             brightness: 100,
             rate_ms: 5000,
+            software: None,
         }
     }
 }
@@ -202,6 +206,15 @@ pub struct Settings {
     /// get force feedback without a kernel module.
     #[serde(default = "default_true")]
     pub wheel_driver: bool,
+    /// The desktop portal's restore token for the screen sampler, so the
+    /// "share your screen" dialog is shown once.
+    #[serde(default)]
+    pub screen_restore_token: Option<String>,
+    /// Devices the user switched to on-board memory mode: they run their own
+    /// stored profile and OpenGHub writes settings into it instead of driving
+    /// them live.
+    #[serde(default)]
+    pub onboard_mode_devices: Vec<String>,
 }
 
 fn default_community_repo() -> String {
@@ -232,6 +245,8 @@ impl Default for Settings {
             community_repo: crate::community::DEFAULT_REPO.into(),
             author_name: String::new(),
             wheel_driver: true,
+            screen_restore_token: None,
+            onboard_mode_devices: Vec::new(),
         }
     }
 }

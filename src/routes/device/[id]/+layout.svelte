@@ -36,6 +36,13 @@
       </button>
       <h1>{device.name}</h1>
 
+      {#if device.onboardMode}
+        <span class="onboard-badge" title="Settings are written into the device's memory">
+          <Icon name="chip" size={14} strokeWidth={1.8} />
+          On-board memory mode
+        </span>
+      {/if}
+
       <div class="right">
         <ProfilePicker />
         <button class="icon-btn" aria-label="Account">
@@ -114,6 +121,21 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  .onboard-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: 8px;
+    padding: 5px 10px;
+    border-radius: 4px;
+    background: rgba(17, 150, 255, 0.16);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent);
   }
 
   .right {

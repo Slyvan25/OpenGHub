@@ -531,6 +531,58 @@ pub fn apply_buttons(
     write_sector(h, profile_sector, &profile)
 }
 
+/// Offset of the two 11-byte LED blocks in a profile sector (effect id +
+/// the same 10-byte union `0x8070` takes), and of their second copy.
+pub const LEDS_OFFSET: usize = 208;
+pub const ALT_LEDS_OFFSET: usize = 230;
+pub const LED_SIZE: usize = 11;
+
+/// Writes lighting effects into the profile so the device shows them in
+/// onboard mode. `effects` are (zone, effect id, union) as `LightEffect::encode`
+/// produces; both LED copies get the same value.
+pub fn write_leds(h: &mut Handle, profile_sector: u16, effects: &[(u8, u8, [u8; 10])], info: &OnboardInfo) -> Result<()> {
+    let size = info.sector_size as usize;
+    let mut profile = read_sector(h, profile_sector, size, true)?;
+    for (zone, id, union) in effects {
+        for base in [LEDS_OFFSET, ALT_LEDS_OFFSET] {
+            let at = base + *zone as usize * LED_SIZE;
+            if at + LED_SIZE > size - 2 {
+                return Err(Error::other(format!("zone {zone} is outside the profile's LED table")));
+            }
+            profile[at] = *id;
+            profile[at + 1..at + LED_SIZE].copy_from_slice(union);
+        }
+    }
+    write_sector(h, profile_sector, &profile)
+}
+
+/// Writes the DPI ladder, default / shift stage and report rate into the
+/// profile header (byte 0 report period ms, 1 default stage, 2 shift stage,
+/// 3.. five little-endian DPI values).
+pub fn write_dpi_table(
+    h: &mut Handle,
+    profile_sector: u16,
+    stages: &[u16],
+    default_stage: u8,
+    shift_stage: u8,
+    rate_hz: Option<u32>,
+    info: &OnboardInfo,
+) -> Result<()> {
+    let size = info.sector_size as usize;
+    let mut profile = read_sector(h, profile_sector, size, true)?;
+    if let Some(hz) = rate_hz {
+        profile[0] = (1000 / hz.max(1)).clamp(1, 8) as u8;
+    }
+    profile[1] = default_stage.min(4);
+    profile[2] = shift_stage.min(4);
+    for i in 0..5 {
+        // Unused slots repeat the last stage, as the factory table does.
+        let v = stages.get(i).or(stages.last()).copied().unwrap_or(800);
+        profile[3 + i * 2..5 + i * 2].copy_from_slice(&v.to_le_bytes());
+    }
+    write_sector(h, profile_sector, &profile)
+}
+
 /// Restores one sector verbatim from a backup file.
 pub fn restore_sector(h: &mut Handle, sector: u16, hex: &str) -> Result<()> {
     let bytes: std::result::Result<Vec<u8>, _> = (0..hex.len())

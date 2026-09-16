@@ -48,6 +48,33 @@
     }
   }
 
+  /** Imports profiles from a G HUB settings.db (LocalAppData\LGHUB). */
+  let importingSettings = $state(false);
+  async function importSettingsDb() {
+    let path: string | null = null;
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const picked = await open({ title: "Select G HUB's settings.db", filters: [{ name: "settings.db", extensions: ["db"] }] });
+      path = typeof picked === "string" ? picked : null;
+    } catch {
+      ui.toast("The file picker needs the desktop app.", "error");
+      return;
+    }
+    if (!path) return;
+    importingSettings = true;
+    try {
+      const r = await api.importGhubSettings(path);
+      await configStore.load();
+      const skipped = r.skipped.length ? ` ${r.skipped.length} item(s) skipped.` : "";
+      ui.toast(`Imported ${r.profiles.length} profile(s) for ${r.devices.length} device(s).${skipped}`, "success", 6000);
+      if (r.skipped.length) console.info("G HUB import skipped:", r.skipped);
+    } catch (e) {
+      ui.toast(api.errorMessage(e), "error", 8000);
+    } finally {
+      importingSettings = false;
+    }
+  }
+
   /** Downloads depots for every connected device that has no artwork yet. */
   async function fetchAll() {
     fetching = true;
@@ -230,7 +257,16 @@ KERNEL=="hidraw*", ATTRS{idVendor}=="046d", TAG+="uaccess"`;
         <Icon name="refresh" size={14} />
         {fetching ? "Fetching…" : "Fetch artwork for connected devices"}
       </button>
+      <button class="ghost" onclick={importSettingsDb} disabled={importingSettings}>
+        <Icon name="profile" size={14} />
+        {importingSettings ? "Importing…" : "Import profiles from settings.db"}
+      </button>
     </div>
+    <p class="lede small">
+      <code>settings.db</code> lives in <code>%LOCALAPPDATA%\LGHUB</code> on Windows. Its DPI
+      ladder and shift, report rate, per-zone lighting and button assignments are imported for
+      the connected devices; game profiles are bound to the same application ids.
+    </p>
     {#if lastImport}
       <p class="lede small">
         Imported: {lastImport.imported.map((d) => d.displayName).join(", ") || "nothing new"}.

@@ -10,6 +10,7 @@
   import { deviceStore } from "$lib/stores/devices.svelte";
   import { ui } from "$lib/stores/ui.svelte";
   import { goto } from "$app/navigation";
+  import type { Device } from "$lib/types";
 
   let refreshing = $state(false);
 
@@ -49,6 +50,16 @@
 
   function brightnessFor(deviceId: string) {
     return configStore.deviceProfile(deviceId).lighting?.brightness ?? 100;
+  }
+
+  async function toggleOnboard(device: Device) {
+    const on = !device.onboardMode;
+    try {
+      deviceStore.patch(await api.setOnboardMode(device.id, on));
+      ui.toast(on ? `${device.name}: on-board memory mode on.` : `${device.name}: on-board memory mode off.`, "success", 3000);
+    } catch (e) {
+      ui.toast(api.errorMessage(e), "error", 6000);
+    }
   }
 
   async function refresh() {
@@ -151,14 +162,18 @@
           </div>
           <button
             class="row-action"
-            title={device.capabilities.onboardMemory ? "Onboard memory mode" : "Device settings"}
-            aria-label={device.capabilities.onboardMemory ? "Onboard memory mode" : "Device settings"}
+            class:on={device.onboardMode === true}
+            title={device.capabilities.onboardMemory
+              ? `On-board memory mode: ${device.onboardMode ? "on" : "off"}`
+              : "Device settings"}
+            aria-label={device.capabilities.onboardMemory ? "Toggle on-board memory mode" : "Device settings"}
             onclick={(e) => {
               e.stopPropagation();
-              goto(`/device/${device.id}/settings`);
+              if (!device.capabilities.onboardMemory) goto(`/device/${device.id}/settings`);
+              else toggleOnboard(device);
             }}
           >
-            <Icon name={device.capabilities.onboardMemory ? "onboardOff" : "gear"} size={20} strokeWidth={1.6} />
+            <Icon name={device.capabilities.onboardMemory ? (device.onboardMode ? "chip" : "onboardOff") : "gear"} size={20} strokeWidth={1.6} />
           </button>
         </div>
       {/each}
@@ -335,6 +350,11 @@
   .row-action:hover {
     background: var(--surface-3);
     color: var(--text);
+  }
+
+  .row-action.on {
+    background: var(--accent);
+    color: #fff;
   }
 
   .empty {

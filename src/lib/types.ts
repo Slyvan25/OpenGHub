@@ -107,6 +107,8 @@ export interface Device {
   dpi: DpiState | null;
   reportRate: ReportRateState | null;
   lightingZones: number;
+  /** true = running its onboard profile; null for devices without one. */
+  onboardMode?: boolean | null;
   wheel?: WheelInfo | null;
   protocolVersion: string;
   demo: boolean;
@@ -140,7 +142,26 @@ export interface FeatureInfo {
   hidden: boolean;
 }
 
-export type LightEffectName = "off" | "fixed" | "breathing" | "cycle";
+export type LightEffectName = "off" | "fixed" | "breathing" | "cycle" | "screen" | "audio";
+
+/** A screen region as fractions of the monitor. */
+export interface Region {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** Parameters of a software effect run by the app (screen sampler / audio visualizer). */
+export type SoftwareEffect =
+  | { kind: "screen"; region: Region; brightness: number }
+  | { kind: "audio"; low: string; mid: string; high: string; sensitivity: number; brightness: number };
+
+export interface LightSyncStatus {
+  activeZones: number;
+  error: string | null;
+  screenAuthorised: boolean;
+}
 
 /** One addressable lighting zone, from HID++ `getZoneInfo`. */
 export interface ZoneInfo {
@@ -157,6 +178,7 @@ export interface LightingSettings {
   color: string;
   brightness: number;
   rateMs: number;
+  software?: SoftwareEffect | null;
 }
 
 export interface Assignment {
@@ -264,6 +286,9 @@ export interface Settings {
   authorName: string;
   /** Run the userspace force-feedback driver for classic wheels. */
   wheelDriver?: boolean;
+  screenRestoreToken?: string | null;
+  /** Devices switched to on-board memory mode. */
+  onboardModeDevices?: string[];
 }
 
 // -- community profiles ----------------------------------------------------

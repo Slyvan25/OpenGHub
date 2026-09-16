@@ -91,6 +91,7 @@ function makeDevice(
       ? { currentHz: 1000, availableHz: o.rates, extended: false }
       : null,
     lightingZones: o.zones ?? 0,
+    onboardMode: o.onboard ? false : null,
     wheel: o.wheel
       ? { rangeMin: 40, rangeMax: 900, rpmLeds: 5, protocol: "ClassicReport30", driverRunning: true, hardwareCalibration: false }
       : null,
@@ -335,6 +336,19 @@ export async function mockInvoke<T>(command: string, args: Record<string, unknow
 
     case "backup_onboard_memory":
       return "~/.local/share/openghub/backups/mock.json" as T;
+
+    case "set_onboard_mode": {
+      const d = device(args.deviceId as string);
+      d.onboardMode = args.on as boolean;
+      return structuredClone(d) as T;
+    }
+    case "import_ghub_settings":
+      throw "importing G HUB settings needs the desktop app";
+
+    case "set_zone_software_effect":
+      return undefined as T;
+    case "get_lightsync_status":
+      return { activeZones: 1, error: null, screenAuthorised: true } as T;
 
     case "apply_assignments":
       return { software: true, onboard: (args.deviceId as string) === "demo-g502" } as T;

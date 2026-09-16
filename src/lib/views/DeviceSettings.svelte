@@ -63,6 +63,15 @@
     }
   }
 
+  async function toggleOnboardMode(on: boolean) {
+    try {
+      deviceStore.patch(await api.setOnboardMode(device.id, on));
+      ui.toast(on ? "On-board memory mode on — profile written to the device." : "On-board memory mode off.", "success", 3000);
+    } catch (e) {
+      ui.toast(api.errorMessage(e), "error", 6000);
+    }
+  }
+
   async function toggleDriver(enabled: boolean) {
     try {
       configStore.apply(await api.setWheelDriver(enabled));
@@ -188,6 +197,27 @@
       </li>
     </ul>
   </section>
+
+  {#if device.capabilities.onboardMemory}
+    <section class="card panel">
+      <h2 class="section-title">On-board memory mode</h2>
+      <p class="none">
+        With on-board memory mode on, the device runs the profile stored in its own memory:
+        DPI ladder, report rate, lighting and button assignments are written into it, and they
+        keep working on any computer with OpenGHub closed. Off, OpenGHub drives the device live
+        (software effects, live assignments). Currently
+        <strong>{device.onboardMode ? "on" : "off"}</strong>.
+      </p>
+      <label class="check">
+        <input
+          type="checkbox"
+          checked={device.onboardMode === true}
+          onchange={(e) => toggleOnboardMode(e.currentTarget.checked)}
+        />
+        <span>Store the active profile on the device (on-board memory mode)</span>
+      </label>
+    </section>
+  {/if}
 
   {#if device.capabilities.wheel}
     <section class="card panel">

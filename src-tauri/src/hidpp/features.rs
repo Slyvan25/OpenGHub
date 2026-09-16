@@ -790,7 +790,7 @@ impl LightEffect {
     /// Returns `(effect_id, 10-byte union)`. The id is translated to the zone's
     /// local index by [`write_lighting`]; the union offsets follow the
     /// `hidpp20_internal_led` layout, starting right after the index byte.
-    fn encode(self, rgb: [u8; 3]) -> (u8, [u8; 10]) {
+    pub fn encode(self, rgb: [u8; 3]) -> (u8, [u8; 10]) {
         let mut p = [0u8; 10];
         match self {
             LightEffect::Off => (lighting::EFFECT_OFF, p),

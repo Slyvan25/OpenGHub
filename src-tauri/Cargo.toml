@@ -37,6 +37,8 @@ directories = "5"
 # per-game command sets, posters). rustls so there is no OpenSSL dependency.
 ureq = { version = "2", default-features = false, features = ["tls", "json", "gzip"] }
 libc = "0.2.189"
+ashpd = { version = "0.12.3", features = ["tokio"] }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
 
 # The `probe` example links against the lib and needs hidapi directly.
 [dev-dependencies]

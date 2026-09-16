@@ -25,9 +25,11 @@ kernel module, no proprietary daemon.
 | TrueForce | ✅ works: the game streams it straight to the wheel (confirmed in Assetto Corsa under Proton); G HUB's gain sliders need HID++ `0x8139`, so on PS-mode wheels the in-game TrueForce settings apply |
 | Device renders, thumbnails, exact zone & button geometry | ✅ imported from a G HUB install, or fetched from Logitech's CDN per device |
 | RGB lighting (`0x8070`) | ✅ per zone: off / fixed / breathing / colour cycle |
+| Screen sampler & audio visualizer | ✅ software effects streamed to each zone (desktop portal + PipeWire / PulseAudio monitor) |
 | Macros on onboard memory (`0x8100`) | ✅ recorded, written to device flash, backed up first |
 | Button remapping (non-macro) | ⚠️ UI and profile storage only; not written to the device yet |
-| Onboard profile memory (`0x8100`) | ❌ detected but not edited |
+| On-board memory mode (`0x8100`) | ✅ toggle per device; DPI ladder, report rate, lighting and button table written into the onboard profile |
+| Import from G HUB `settings.db` | ✅ profiles, DPI/shift, report rate, per-zone lighting, button assignments |
 
 ## Requirements
 
@@ -268,6 +270,31 @@ profile for editing but the device always receives the flattened sequence**. Lik
 recorded keystrokes, typed ASCII text and delays are what a device can play. "Use standard
 delays" replaces the recorded timing with a fixed gap when the macro is flattened.
 
+### On-board memory mode
+
+G HUB's card button. Off (default), OpenGHub drives the mouse live: host mode, software
+assignments through the button spy, software lighting effects. On, the mouse runs the profile
+in its own flash and OpenGHub writes into that profile instead — the DPI ladder / default /
+shift stage and report period in the header (bytes 0–12), the LED blocks at offset 208 (and
+their copy at 230; each is the effect id plus the same 10-byte union `0x8070` takes — the
+factory sector read `03 … 1f 40` = Cycle 8000 ms), and the button table. Every write is
+preceded by a backup and followed by a host→onboard round trip so the device reloads the
+profile. The choice is remembered per device (`settings.onboardModeDevices`), re-applied after
+a rescan, and the profile is rewritten on every profile switch. Software effects cannot live
+on the device; they fall back to a fixed colour there.
+
+### Importing your G HUB profiles
+
+Settings → *Import profiles from settings.db* reads `%LOCALAPPDATA%\LGHUB\settings.db`
+(one SQLite table whose latest row is a JSON document). Profiles map to ours by Logitech
+application id (the Desktop profile to *Desktop: Default*); per device, slot ids such as
+`g502wireless_mouse_settings`, `…_lighting_setting_firmware` and `…_g7_m1[_shifted]` become the
+DPI table with shift stage, report rate, per-zone lighting and `button-N[:gshift]`
+assignments. Built-in mouse/device functions are synthetic card ids
+(`0f82f693-…-TTNN00000000`) decoded from the G502's factory table; keystroke cards carry a HID
+usage plus modifier usages; integration actions (OBS, Discord, Overwolf) have no Linux
+equivalent and are listed as skipped.
+
 ### Button remapping is device-specific
 
 There are two mechanisms, and which one applies depends on the hardware:
@@ -371,6 +398,29 @@ can see which tab is which light.
 
 The glow itself is composited over the photo with `mix-blend-mode: screen`, one blob per lit
 zone, so light is added rather than painted over the product.
+
+### Screen sampler and audio visualizer
+
+G HUB's two software effects run in `src-tauri/src/lightsync.rs`. A source produces a colour
+per zone ~20 times a second, and each is pushed as a *fixed* colour with `persist = false` —
+RAM only, so the flash is untouched and the device falls back to its stored effect when the
+app stops. Writes are skipped when the colour barely changed, so a static screen costs nothing.
+
+- **Screen** — the desktop portal's ScreenCast (`ashpd`) provides a PipeWire stream; the
+  portal asks once which monitor to share and hands back a restore token that is kept in the
+  settings, so it never asks again. A `gst-launch-1.0 pipewiresrc … videoscale` helper turns
+  the stream into 64×36 RGB thumbnails on a pipe (no PipeWire headers needed at build time), and
+  each zone averages the region it is mapped to — drag the region on the Lighting page, or pick
+  Full / Left / Right / Top / Bottom / Centre.
+- **Audio** — `parec --device=@DEFAULT_MONITOR@` records whatever plays on the default output;
+  a 1024-point FFT with a Hann window gives RMS and three bands (40–250 / 250–2000 /
+  2000–9000 Hz), each with its own peak-following gain so quiet and loud sources both use the
+  whole range. The zone colour is the bass / mids / treble colours blended by band energy and
+  dimmed by level.
+
+Both need the helpers on `PATH` (`gst-launch-1.0` with the pipewire plugin, `parec`); a missing
+one shows up as a message under the effect. `cargo run --example lightsync -- audio|screen`
+exercises the sources on their own.
 
 ### Lighting notes
 

@@ -70,8 +70,7 @@ pub async fn get_connected_devices(
     };
     let payload = DeviceListPayload::build(&manager, devices);
     let _ = app.emit(EVENT_DEVICES, &payload);
-    crate::apply_wheel_profiles(&app);
-    crate::apply_assignment_profiles(&app);
+    crate::apply_all_profiles(&app);
     // Newly connected devices get their render fetched in the background.
     crate::spawn_artwork_fetch(app, payload.devices.clone());
     Ok(payload)
@@ -149,7 +148,37 @@ pub async fn set_device_dpi(
     manager: State<'_, DeviceManager>,
     device_id: String,
     dpi: u16,
+    store: State<'_, Store>,
 ) -> Result<DpiState> {
+    if manager.snapshot(&device_id).and_then(|s| s.onboard_mode) == Some(true) {
+        // Onboard mode: the ladder lives in the profile sector.
+        let cfg = store.get();
+        let dp = cfg
+            .profiles
+            .iter()
+            .find(|p| p.id == cfg.active_profile)
+            .and_then(|p| p.devices.get(&device_id))
+            .cloned()
+            .unwrap_or_default();
+        let mut stages = dp.dpi_stages.clone();
+        if stages.is_empty() {
+            stages = vec![dpi];
+        }
+        let active = match stages.iter().position(|s| *s == dpi) {
+            Some(i) => i,
+            None => {
+                let i = dp.active_stage.min(stages.len() - 1);
+                stages[i] = dpi;
+                i
+            }
+        };
+        manager.write_onboard_dpi(&device_id, &stages, active, dp.shift_stage, dp.report_rate_hz)?;
+        emit_device_update(&app, &manager, &device_id);
+        return manager
+            .snapshot(&device_id)
+            .and_then(|s| s.dpi)
+            .ok_or_else(|| Error::other("no DPI state"));
+    }
     let state = manager.set_dpi(&device_id, dpi)?;
     emit_device_update(&app, &manager, &device_id);
     Ok(state)
@@ -163,7 +192,26 @@ pub async fn set_polling_rate(
     manager: State<'_, DeviceManager>,
     device_id: String,
     rate_hz: u32,
+    store: State<'_, Store>,
 ) -> Result<ReportRateState> {
+    if manager.snapshot(&device_id).and_then(|s| s.onboard_mode) == Some(true) {
+        let cfg = store.get();
+        let dp = cfg
+            .profiles
+            .iter()
+            .find(|p| p.id == cfg.active_profile)
+            .and_then(|p| p.devices.get(&device_id))
+            .cloned()
+            .unwrap_or_default();
+        let stages = if dp.dpi_stages.is_empty() { vec![800] } else { dp.dpi_stages.clone() };
+        manager.write_onboard_dpi(&device_id, &stages, dp.active_stage, dp.shift_stage, Some(rate_hz))?;
+        let _ = manager.refresh_device(&device_id);
+        emit_device_update(&app, &manager, &device_id);
+        return manager
+            .snapshot(&device_id)
+            .and_then(|s| s.report_rate)
+            .ok_or_else(|| Error::other("no report rate state"));
+    }
     let state = manager.set_report_rate(&device_id, rate_hz)?;
     emit_device_update(&app, &manager, &device_id);
     Ok(state)
@@ -224,7 +272,47 @@ pub async fn set_device_lighting(
         },
         other => return Err(Error::other(format!("unknown lighting effect '{other}'"))),
     };
+    if manager.snapshot(&request.device_id).and_then(|s| s.onboard_mode) == Some(true) && request.persist {
+        // Onboard mode: 0x8070 writes are ignored, the profile's LED table is
+        // what the device shows.
+        let zones: Vec<u8> = if request.zone == all_zones() {
+            (0..manager.snapshot(&request.device_id).map(|s| s.lighting_zones).unwrap_or(1).max(1)).collect()
+        } else {
+            vec![request.zone]
+        };
+        let entries: Vec<(u8, [u8; 3], LightEffect)> = zones.into_iter().map(|z| (z, rgb, effect)).collect();
+        return manager.write_onboard_lighting(&request.device_id, &entries);
+    }
     manager.set_lighting(&request.device_id, request.zone, rgb, effect, request.persist)
+}
+
+/// Switches a device in or out of on-board memory mode and remembers it.
+/// Going onboard writes the active profile (DPI, lighting, assignments) into
+/// the device so it behaves the same with OpenGHub closed.
+#[tauri::command]
+pub async fn set_onboard_mode(
+    app: AppHandle,
+    manager: State<'_, DeviceManager>,
+    store: State<'_, Store>,
+    device_id: String,
+    on: bool,
+) -> Result<DeviceSnapshot> {
+    manager.set_onboard_mode(&device_id, on)?;
+    let id = device_id.clone();
+    store.update(move |cfg| {
+        cfg.settings.onboard_mode_devices.retain(|d| *d != id);
+        if on {
+            cfg.settings.onboard_mode_devices.push(id);
+        }
+    })?;
+    if on {
+        crate::write_profile_to_device(&app, &device_id);
+    }
+    crate::apply_assignment_profiles(&app);
+    let _ = manager.refresh_device(&device_id);
+    emit_device_update(&app, &manager, &device_id);
+    let _ = app.emit(EVENT_CONFIG_CHANGED, store.get());
+    manager.snapshot(&device_id).ok_or(Error::NotConnected)
 }
 
 /// Every lighting zone: index, location name and the effects it accepts.
@@ -306,8 +394,7 @@ pub async fn set_active_profile(app: AppHandle, store: State<'_, Store>, profile
             cfg.active_profile = profile_id;
         }
     })?;
-    crate::apply_wheel_profiles(&app);
-    crate::apply_assignment_profiles(&app);
+    crate::apply_all_profiles(&app);
     Ok(store.get())
 }
 
@@ -477,6 +564,181 @@ pub async fn bind_profile_application(
         }
     })?;
     Ok(store.get())
+}
+
+// ---------------------------------------------------------------------------
+// G HUB settings.db import
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GhubImportSummary {
+    pub profiles: Vec<String>,
+    pub devices: Vec<String>,
+    pub skipped: Vec<String>,
+}
+
+/// Imports profiles from a G HUB `settings.db`: DPI table and shift, report
+/// rate, per-zone lighting and button assignments, for every connected device
+/// the file has settings for. Game profiles are bound to the same Logitech
+/// application ids our database uses.
+#[tauri::command]
+pub async fn import_ghub_settings(
+    app: AppHandle,
+    manager: State<'_, DeviceManager>,
+    store: State<'_, Store>,
+    db: State<'_, std::sync::Arc<crate::apps::AppDatabase>>,
+    path: String,
+) -> Result<GhubImportSummary> {
+    let doc = tauri::async_runtime::spawn_blocking(move || crate::ghub_settings::read_document(std::path::Path::new(&path)))
+        .await
+        .map_err(|e| Error::other(e.to_string()))??;
+    let report = crate::ghub_settings::parse(&doc);
+
+    // Slot prefix (`g502wireless`) → connected device ids, via the device
+    // database's model ids and product ids.
+    let mut defs = crate::depot::load_cache().map(|(_, d)| d).unwrap_or_default();
+    defs.extend(crate::depot::builtin_defs());
+    let snapshots = manager.snapshots();
+    let device_for_prefix = |prefix: &str| -> Vec<String> {
+        let pids: Vec<u16> = defs
+            .iter()
+            .filter(|d| d.model_id.replace(['_', '-'], "") == prefix)
+            .flat_map(|d| d.product_ids.clone())
+            .collect();
+        snapshots
+            .iter()
+            .filter(|s| !s.demo && (pids.contains(&s.product_id) || s.model_ids.iter().any(|m| pids.contains(m))))
+            .map(|s| s.id.clone())
+            .collect()
+    };
+    let apps = db.applications();
+
+    let mut summary = GhubImportSummary { profiles: vec![], devices: vec![], skipped: vec![] };
+    for imported in &report.profiles {
+        summary.skipped.extend(imported.skipped.iter().cloned());
+        let profile_id = store.update(|cfg| {
+            let id = match &imported.application_id {
+                None => "default".to_string(),
+                Some(app_id) => match cfg.profiles.iter().find(|p| p.application_id.as_deref() == Some(app_id)) {
+                    Some(p) => p.id.clone(),
+                    None => {
+                        let game = apps.iter().find(|a| &a.id == app_id);
+                        let name = match game {
+                            Some(g) => format!("{}: {}", g.name, imported.name),
+                            None => imported.name.clone(),
+                        };
+                        let id = format!("g{}", imported.ghub_id.chars().take(8).collect::<String>());
+                        cfg.profiles.push(Profile {
+                            id: id.clone(),
+                            name,
+                            kind: "game".into(),
+                            application_id: Some(app_id.clone()),
+                            poster_url: game.and_then(|g| g.poster_url.clone()),
+                            disabled: false,
+                            devices: Default::default(),
+                        });
+                        id
+                    }
+                },
+            };
+            id
+        })?;
+        summary.profiles.push(imported.name.clone());
+
+        for (prefix, dp) in &imported.devices {
+            let ids = device_for_prefix(prefix);
+            if ids.is_empty() {
+                summary.skipped.push(format!("{prefix}: no connected device matches"));
+                continue;
+            }
+            for device_id in ids {
+                let dp = dp.clone();
+                let did = device_id.clone();
+                let pid = profile_id.clone();
+                store.update(move |cfg| {
+                    if let Some(p) = cfg.profiles.iter_mut().find(|p| p.id == pid) {
+                        let entry = p.devices.entry(did).or_default();
+                        if !dp.dpi_stages.is_empty() {
+                            entry.dpi_stages = dp.dpi_stages.clone();
+                            entry.active_stage = dp.active_stage;
+                            entry.shift_stage = dp.shift_stage;
+                        }
+                        if dp.report_rate_hz.is_some() {
+                            entry.report_rate_hz = dp.report_rate_hz;
+                        }
+                        if !dp.lighting_zones.is_empty() {
+                            entry.lighting_zones = dp.lighting_zones.clone();
+                            entry.lighting = dp.lighting.clone();
+                        }
+                        if !dp.assignments.is_empty() {
+                            entry.assignments = dp.assignments.clone();
+                        }
+                    }
+                })?;
+                if !summary.devices.contains(&device_id) {
+                    summary.devices.push(device_id);
+                }
+            }
+        }
+    }
+
+    let _ = app.emit(EVENT_CONFIG_CHANGED, store.get());
+    crate::apply_all_profiles(&app);
+    Ok(summary)
+}
+
+// ---------------------------------------------------------------------------
+// Software lighting (screen sampler / audio visualizer)
+// ---------------------------------------------------------------------------
+
+use crate::lightsync::{LightSync, SoftwareEffect};
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LightSyncStatus {
+    pub active_zones: usize,
+    pub error: Option<String>,
+    pub screen_authorised: bool,
+}
+
+/// Starts (or clears) a software effect on one zone. The Lighting screen
+/// calls this instead of `set_device_lighting` for screen / audio effects;
+/// the sources start on the next engine tick (the screen one may show the
+/// desktop's sharing dialog once).
+#[tauri::command]
+pub async fn set_zone_software_effect(
+    sync: State<'_, std::sync::Arc<LightSync>>,
+    store: State<'_, Store>,
+    device_id: String,
+    zone: u8,
+    effect: Option<SoftwareEffect>,
+) -> Result<()> {
+    sync.set_zone((device_id, zone), effect);
+    // Remember a restore token as soon as we have one.
+    if let Some(t) = sync.restore_token.lock().clone() {
+        if store.get().settings.screen_restore_token.as_deref() != Some(t.as_str()) {
+            let _ = store.update(|c| c.settings.screen_restore_token = Some(t));
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_lightsync_status(
+    sync: State<'_, std::sync::Arc<LightSync>>,
+    store: State<'_, Store>,
+) -> Result<LightSyncStatus> {
+    if let Some(t) = sync.restore_token.lock().clone() {
+        if store.get().settings.screen_restore_token.as_deref() != Some(t.as_str()) {
+            let _ = store.update(|c| c.settings.screen_restore_token = Some(t));
+        }
+    }
+    Ok(LightSyncStatus {
+        active_zones: sync.effects().len(),
+        error: sync.last_error.lock().clone(),
+        screen_authorised: sync.restore_token.lock().is_some(),
+    })
 }
 
 // ---------------------------------------------------------------------------

@@ -9,13 +9,14 @@
   import DeviceArt, { type ZoneGlow } from "$lib/components/DeviceArt.svelte";
   import DeviceWorkspace from "$lib/components/DeviceWorkspace.svelte";
   import Icon from "$lib/components/Icon.svelte";
+  import RegionPicker from "$lib/components/RegionPicker.svelte";
   import Slider from "$lib/components/Slider.svelte";
   import { artworkIds, batteryIcon, batteryLabel } from "$lib/device-ui";
   import { artwork } from "$lib/stores/artwork.svelte";
   import { configStore } from "$lib/stores/config.svelte";
   import { deviceStore } from "$lib/stores/devices.svelte";
   import { ui } from "$lib/stores/ui.svelte";
-  import type { Device, LightEffectName, LightingSettings, ZoneInfo } from "$lib/types";
+  import type { Device, LightEffectName, LightingSettings, SoftwareEffect, ZoneInfo } from "$lib/types";
   import type { ZoneSpot } from "$lib/zones";
 
   interface Props {
@@ -36,7 +37,15 @@
     fixed: "Fixed",
     breathing: "Breathing",
     cycle: "Cycle",
+    screen: "Screen sampler",
+    audio: "Audio visualizer",
   };
+
+  /** Effects OpenGHub runs itself, streaming colours to the zone. */
+  const SOFTWARE: LightEffectName[] = ["screen", "audio"];
+  const SCREEN_DEFAULT: SoftwareEffect = { kind: "screen", region: { x: 0, y: 0, w: 1, h: 1 }, brightness: 100 };
+  const AUDIO_DEFAULT: SoftwareEffect = { kind: "audio", low: "#ff2d2d", mid: "#00b8fc", high: "#ffffff", sensitivity: 60, brightness: 100 };
+  let syncStatus = $state<{ activeZones: number; error: string | null; screenAuthorised: boolean } | null>(null);
 
   const DEFAULTS: LightingSettings = {
     effect: "fixed",
@@ -64,11 +73,36 @@
   let syncingOptions = $state(false);
   const zoneInfo = $derived(zones.find((z) => z.index === activeZone));
   /** Only offer effects this particular zone advertises. */
-  const available = $derived(
-    (zoneInfo?.effects ?? [0x00, 0x01, 0x03, 0x0a])
+  const available = $derived([
+    ...(zoneInfo?.effects ?? [0x00, 0x01, 0x03, 0x0a])
       .map((id) => EFFECT_BY_ID[id])
       .filter((name): name is LightEffectName => !!name),
-  );
+    ...SOFTWARE,
+  ]);
+
+  /** The active zone's software parameters, with defaults for its kind. */
+  const software = $derived.by<SoftwareEffect | null>(() => {
+    if (current.effect === "screen") return current.software?.kind === "screen" ? current.software : SCREEN_DEFAULT;
+    if (current.effect === "audio") return current.software?.kind === "audio" ? current.software : AUDIO_DEFAULT;
+    return null;
+  });
+
+  // Poll the engine status while a software effect is shown, so a refused
+  // screen share or a missing helper is visible where the effect was chosen.
+  $effect(() => {
+    if (!software) {
+      syncStatus = null;
+      return;
+    }
+    let alive = true;
+    const tick = () => api.getLightSyncStatus().then((s) => alive && (syncStatus = s)).catch(() => {});
+    tick();
+    const t = setInterval(tick, 2000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  });
 
   const glows = $derived<ZoneGlow[]>(
     zones.map((z) => {
@@ -122,6 +156,20 @@
     if (!settings) return;
     applying = true;
     try {
+      if (SOFTWARE.includes(settings.effect)) {
+        const fx = settings.software && settings.software.kind === settings.effect
+          ? settings.software
+          : settings.effect === "screen" ? SCREEN_DEFAULT : AUDIO_DEFAULT;
+        // Keep the stored parameters in step with what runs.
+        if (settings.software !== fx) {
+          byZone = { ...byZone, [String(zoneIndex)]: { ...settings, software: fx } };
+        }
+        await api.setZoneSoftwareEffect(device.id, zoneIndex, fx);
+        await persist();
+        return;
+      }
+      // A firmware effect replaces any software one on this zone.
+      await api.setZoneSoftwareEffect(device.id, zoneIndex, null);
       await api.setDeviceLighting({
         deviceId: device.id,
         zone: zoneIndex,
@@ -329,7 +377,80 @@
         />
       {/if}
 
-      {#if current.effect !== "off"}
+      {#if software?.kind === "screen"}
+        <div class="field">
+          <span class="label">Screen region</span>
+          <RegionPicker
+            value={software.region}
+            onchange={(region) => {
+              update({ software: { ...software, region } });
+              apply(activeZone);
+            }}
+          />
+        </div>
+        <Slider
+          value={software.brightness}
+          min={0}
+          max={100}
+          label="Effect brightness"
+          suffix="%"
+          oninput={(v) => update({ software: { ...software, brightness: v }, brightness: v })}
+          onchange={() => apply(activeZone)}
+        />
+      {:else if software?.kind === "audio"}
+        <div class="field">
+          <span class="label">Colours</span>
+          <div class="bands">
+            {#each [["low", "Bass"], ["mid", "Mids"], ["high", "Treble"]] as [key, name] (key)}
+              <label class="band">
+                <input
+                  type="color"
+                  value={software[key as "low" | "mid" | "high"]}
+                  onchange={(e) => {
+                    update({ software: { ...software, [key]: e.currentTarget.value } });
+                    apply(activeZone);
+                  }}
+                />
+                <span>{name}</span>
+              </label>
+            {/each}
+          </div>
+        </div>
+        <Slider
+          value={software.sensitivity}
+          min={0}
+          max={100}
+          label="Sensitivity"
+          suffix="%"
+          oninput={(v) => update({ software: { ...software, sensitivity: v } })}
+          onchange={() => apply(activeZone)}
+        />
+        <Slider
+          value={software.brightness}
+          min={0}
+          max={100}
+          label="Effect brightness"
+          suffix="%"
+          oninput={(v) => update({ software: { ...software, brightness: v }, brightness: v })}
+          onchange={() => apply(activeZone)}
+        />
+      {/if}
+
+      {#if software}
+        <p class="hint" class:error={!!syncStatus?.error}>
+          {#if syncStatus?.error}
+            {syncStatus.error}
+          {:else if software.kind === "screen"}
+            {syncStatus?.screenAuthorised
+              ? "Sampling your screen through the desktop portal."
+              : "Your desktop will ask once which screen to share."}
+          {:else}
+            Listening to what is playing on the default output.
+          {/if}
+        </p>
+      {/if}
+
+      {#if current.effect !== "off" && !software}
         <Slider
           value={current.brightness}
           min={0}
@@ -555,6 +676,47 @@
     font-size: 11.5px;
     color: var(--text-dimmer);
     line-height: 1.5;
+  }
+
+  .hint.error {
+    color: var(--warning);
+  }
+
+  .bands {
+    display: flex;
+    gap: 14px;
+  }
+
+  .band {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    cursor: pointer;
+  }
+
+  .band input {
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    border: 2px solid var(--line-strong);
+    border-radius: 50%;
+    background: none;
+    cursor: pointer;
+  }
+
+  .band input::-webkit-color-swatch-wrapper {
+    padding: 0;
+  }
+
+  .band input::-webkit-color-swatch {
+    border: none;
+    border-radius: 50%;
   }
 
   .battery {

@@ -74,6 +74,10 @@ pub struct DeviceSnapshot {
     pub dpi: Option<DpiState>,
     pub report_rate: Option<ReportRateState>,
     pub lighting_zones: u8,
+    /// `Some(true)` when the device runs its onboard profile (0x8100), as
+    /// last read; `None` for devices without onboard profiles.
+    #[serde(default)]
+    pub onboard_mode: Option<bool>,
     #[serde(default)]
     pub wheel: Option<WheelInfo>,
     pub protocol_version: String,
@@ -100,6 +104,7 @@ impl DeviceSnapshot {
             dpi: None,
             report_rate: None,
             lighting_zones: 0,
+            onboard_mode: None,
             wheel: None,
             protocol_version: String::new(),
             demo: false,
@@ -334,6 +339,116 @@ impl DeviceManager {
     }
 
     /// Applies a DPI change, updating the cached snapshot on success.
+    // -- onboard memory mode ----------------------------------------------------
+
+    /// Runs `f` against the device's enabled onboard profile sector.
+    fn with_onboard_profile<T>(
+        &self,
+        inner: &mut Inner,
+        id: &str,
+        f: impl FnOnce(&mut Handle, u16, u16, &crate::hidpp::onboard::OnboardInfo) -> Result<T>,
+    ) -> Result<T> {
+        use crate::hidpp::onboard;
+        let product_id = inner.snapshots.get(id).map(|s| s.product_id).unwrap_or(0);
+        inner.with_handle(id, |h| {
+            let info = onboard::read_info(h)?;
+            let size = info.sector_size as usize;
+            let directory = onboard::parse_directory(&onboard::read_sector(h, 0, size, true)?);
+            let profile = directory
+                .iter()
+                .position(|e| e.enabled)
+                .ok_or_else(|| Error::other("the device has no enabled onboard profile"))?;
+            let sector = directory[profile].sector;
+            let macro_sector = onboard::macro_sector_for(&info, profile);
+            let backup = onboard::backup(h, id, product_id)?;
+            write_backup(&backup)?;
+            f(h, sector, macro_sector, &info)
+        })
+    }
+
+    /// Switches a device between running its onboard profile and being
+    /// host-driven. Going onboard hands the buttons back to the device
+    /// (identity remap, spy off); the onboard table written by
+    /// `apply_assignments` then takes over.
+    pub fn set_onboard_mode(&self, id: &str, on: bool) -> Result<bool> {
+        let mut inner = self.inner.lock();
+        if inner.demo {
+            if let Some(s) = inner.snapshots.get_mut(id) {
+                s.onboard_mode = Some(on);
+            }
+            return Ok(on);
+        }
+        inner.with_handle(id, |h| {
+            if !h.supports(features::onboard::ID) {
+                return Err(Error::other("this device has no onboard profiles"));
+            }
+            if on && h.supports(features::button_spy::ID) {
+                let mut table = [0u8; 16];
+                for (i, v) in table.iter_mut().enumerate() {
+                    *v = i as u8 + 1;
+                }
+                let _ = features::set_spy(h, false);
+                let _ = features::write_remapping(h, &table);
+            }
+            features::write_onboard_mode(h, if on { features::onboard::MODE_ONBOARD } else { features::onboard::MODE_HOST })
+        })?;
+        if on {
+            inner.plans.remove(id);
+        }
+        if let Some(s) = inner.snapshots.get_mut(id) {
+            s.onboard_mode = Some(on);
+        }
+        Ok(on)
+    }
+
+    /// Writes lighting into the onboard profile ("effects on device") and
+    /// reloads the profile so it shows at once.
+    pub fn write_onboard_lighting(&self, id: &str, zones: &[(u8, [u8; 3], features::LightEffect)]) -> Result<()> {
+        use crate::hidpp::onboard;
+        let mut inner = self.inner.lock();
+        if inner.demo {
+            return Ok(());
+        }
+        let effects: Vec<(u8, u8, [u8; 10])> = zones
+            .iter()
+            .map(|(z, rgb, fx)| {
+                let (id, union) = fx.encode(*rgb);
+                (*z, id, union)
+            })
+            .collect();
+        self.with_onboard_profile(&mut inner, id, |h, sector, _, info| onboard::write_leds(h, sector, &effects, info))?;
+        inner.with_handle(id, reload_onboard_profile)
+    }
+
+    /// Writes the DPI ladder and report rate into the onboard profile.
+    pub fn write_onboard_dpi(
+        &self,
+        id: &str,
+        stages: &[u16],
+        active: usize,
+        shift: Option<usize>,
+        rate_hz: Option<u32>,
+    ) -> Result<()> {
+        use crate::hidpp::onboard;
+        let mut inner = self.inner.lock();
+        if inner.demo {
+            return Ok(());
+        }
+        let default = active.min(4) as u8;
+        let shift = shift.unwrap_or(active).min(4) as u8;
+        self.with_onboard_profile(&mut inner, id, |h, sector, _, info| {
+            onboard::write_dpi_table(h, sector, stages, default, shift, rate_hz, info)
+        })?;
+        inner.with_handle(id, reload_onboard_profile)?;
+        // Refresh what the card shows.
+        if let Ok(state) = inner.with_handle(id, |h| features::read_dpi(h, 0)) {
+            if let Some(snap) = inner.snapshots.get_mut(id) {
+                snap.dpi = Some(state);
+            }
+        }
+        Ok(())
+    }
+
     // -- assignments ----------------------------------------------------------
 
     /// Applies a profile's button assignments to a device: the software-mode
@@ -365,7 +480,8 @@ impl DeviceManager {
             Ok((spy, onboard, idx))
         })?;
 
-        if spy {
+        let onboard_chosen = inner.snapshots.get(id).and_then(|s| s.onboard_mode).unwrap_or(false);
+        if spy && !onboard_chosen {
             let count = inner.with_handle(id, features::spy_button_count)?;
             let plan = Plan::build(assignments, macros, count);
             let table = plan.remapping;
@@ -1033,6 +1149,16 @@ pub fn factory_buttons(product_id: u16, count: usize) -> Vec<crate::hidpp::onboa
         .collect()
 }
 
+/// Makes the device re-read its profile after a sector write: a round trip
+/// through host mode reloads it. Only done when the device is in onboard mode.
+fn reload_onboard_profile(h: &mut Handle) -> Result<()> {
+    if matches!(features::read_onboard_mode(h), Ok(features::onboard::MODE_ONBOARD)) {
+        features::write_onboard_mode(h, features::onboard::MODE_HOST)?;
+        features::write_onboard_mode(h, features::onboard::MODE_ONBOARD)?;
+    }
+    Ok(())
+}
+
 /// Writes an onboard-memory backup to the data directory and returns its path.
 pub fn write_backup(backup: &crate::hidpp::onboard::MemoryBackup) -> Result<std::path::PathBuf> {
     let dir = crate::artwork::dir()
@@ -1146,6 +1272,9 @@ fn probe(handle: &mut Handle, snapshot: &mut DeviceSnapshot, endpoint: &hidpp::E
 
 /// The parts that change while the device is plugged in.
 fn read_dynamic_state(handle: &mut Handle, snapshot: &mut DeviceSnapshot) {
+    if handle.supports(features::onboard::ID) {
+        snapshot.onboard_mode = features::read_onboard_mode(handle).ok().map(|m| m == features::onboard::MODE_ONBOARD);
+    }
     snapshot.last_error = None;
 
     if snapshot.capabilities.battery {

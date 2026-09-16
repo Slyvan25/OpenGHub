@@ -7,7 +7,9 @@ pub mod community;
 pub mod demo;
 pub mod depot;
 pub mod games;
+pub mod ghub_settings;
 pub mod keymap;
+pub mod lightsync;
 pub mod remap;
 pub mod hidpp;
 pub mod profiles;
@@ -41,6 +43,7 @@ pub fn run() {
         .manage(std::sync::Arc::new(apps::AppDatabase::new()))
         .manage(games::Library::default())
         .manage(std::sync::Arc::new(remap::Injector::new()))
+        .manage(std::sync::Arc::new(lightsync::LightSync::new()))
         .setup(|app| {
             let handle = app.handle().clone();
 
@@ -51,8 +54,8 @@ pub fn run() {
             spawn_artwork_fetch(handle.clone(), devices);
 
             build_tray(app)?;
-            apply_wheel_profiles(&handle);
-            apply_assignment_profiles(&handle);
+            apply_all_profiles(&handle);
+            lightsync::spawn(handle.clone());
             spawn_button_pump(handle.clone());
             spawn_wheel_telemetry(handle.clone());
             spawn_battery_poller(handle.clone());
@@ -86,6 +89,10 @@ pub fn run() {
             commands::import_community_profile,
             commands::export_profile,
             commands::apply_assignments,
+            commands::import_ghub_settings,
+            commands::set_onboard_mode,
+            commands::set_zone_software_effect,
+            commands::get_lightsync_status,
             commands::get_wheel_state,
             commands::get_wheel_settings,
             commands::set_wheel_settings,
@@ -127,6 +134,7 @@ pub fn run() {
         .expect("error while building OpenGHub")
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
+                app.state::<std::sync::Arc<lightsync::LightSync>>().stop_all();
                 app.state::<DeviceManager>().release_devices();
                 app.state::<std::sync::Arc<remap::Injector>>().release_all();
             }
@@ -268,8 +276,7 @@ fn spawn_application_watcher(app: tauri::AppHandle) {
                     let id = profile.id.clone();
                     let _ = store.update(|c| c.active_profile = id);
                     let _ = app.emit(commands::EVENT_CONFIG_CHANGED, store.get());
-                    apply_wheel_profiles(&app);
-                    apply_assignment_profiles(&app);
+                    apply_all_profiles(&app);
                 }
             }
         }
@@ -456,8 +463,101 @@ fn next_profile(app: &tauri::AppHandle) {
     let next = enabled[(pos + 1) % enabled.len()].id.clone();
     let _ = store.update(|c| c.active_profile = next);
     let _ = app.emit(commands::EVENT_CONFIG_CHANGED, store.get());
+    apply_all_profiles(app);
+}
+
+/// Everything a profile switch or rescan has to push to the hardware.
+pub fn apply_all_profiles(app: &tauri::AppHandle) {
     apply_wheel_profiles(app);
+    apply_onboard_modes(app);
     apply_assignment_profiles(app);
+    apply_lighting_profiles(app);
+    for id in app.state::<Store>().get().settings.onboard_mode_devices.clone() {
+        write_profile_to_device(app, &id);
+    }
+}
+
+/// Puts the devices the user chose into on-board memory mode after a rescan,
+/// and writes the active profile into them. Everything else stays host-driven.
+pub fn apply_onboard_modes(app: &tauri::AppHandle) {
+    let manager = app.state::<DeviceManager>();
+    let store = app.state::<Store>();
+    let chosen = store.get().settings.onboard_mode_devices;
+    for snap in manager.snapshots() {
+        if snap.demo || !snap.capabilities.onboard_memory {
+            continue;
+        }
+        let want = chosen.contains(&snap.id);
+        if want && snap.onboard_mode != Some(true) {
+            match manager.set_onboard_mode(&snap.id, true) {
+                Ok(_) => write_profile_to_device(app, &snap.id),
+                Err(e) => log::warn!("{}: onboard mode not set: {e}", snap.name),
+            }
+        }
+    }
+}
+
+/// Writes the active profile's DPI ladder and lighting into a device's onboard
+/// profile — "effects on device". Assignments go through `apply_assignments`.
+pub fn write_profile_to_device(app: &tauri::AppHandle, device_id: &str) {
+    let manager = app.state::<DeviceManager>();
+    let store = app.state::<Store>();
+    let cfg = store.get();
+    let Some(dp) = cfg.profiles.iter().find(|p| p.id == cfg.active_profile).and_then(|p| p.devices.get(device_id)) else {
+        return;
+    };
+    if !dp.dpi_stages.is_empty() {
+        if let Err(e) = manager.write_onboard_dpi(device_id, &dp.dpi_stages, dp.active_stage, dp.shift_stage, dp.report_rate_hz) {
+            log::warn!("{device_id}: onboard DPI not written: {e}");
+        }
+    }
+    let mut zones: Vec<(u8, [u8; 3], hidpp::features::LightEffect)> = Vec::new();
+    for (zone, l) in &dp.lighting_zones {
+        let Ok(z) = zone.parse::<u8>() else { continue };
+        let rgb = crate::lightsync::parse_hex(&l.color);
+        let fx = match l.effect.as_str() {
+            "off" => hidpp::features::LightEffect::Off,
+            "breathing" => hidpp::features::LightEffect::Breathing { rate_ms: l.rate_ms, brightness: l.brightness },
+            "cycle" => hidpp::features::LightEffect::Cycle { rate_ms: l.rate_ms, brightness: l.brightness },
+            // Software effects cannot live on the device; keep a fixed colour.
+            _ => hidpp::features::LightEffect::Fixed,
+        };
+        zones.push((z, rgb, fx));
+    }
+    if !zones.is_empty() {
+        if let Err(e) = manager.write_onboard_lighting(device_id, &zones) {
+            log::warn!("{device_id}: onboard lighting not written: {e}");
+        }
+    }
+}
+
+/// Installs the active profile's software lighting effects (screen sampler,
+/// audio visualizer) for the connected devices; firmware effects are already
+/// on the device. The restore token for screen sharing is loaded from settings.
+pub fn apply_lighting_profiles(app: &tauri::AppHandle) {
+    let manager = app.state::<DeviceManager>();
+    let store = app.state::<Store>();
+    let sync = app.state::<std::sync::Arc<lightsync::LightSync>>();
+    let cfg = store.get();
+    if sync.restore_token.lock().is_none() {
+        *sync.restore_token.lock() = cfg.settings.screen_restore_token.clone();
+    }
+    let active = cfg.profiles.iter().find(|p| p.id == cfg.active_profile);
+    let mut table = std::collections::HashMap::new();
+    for snap in manager.snapshots() {
+        if snap.demo || !snap.capabilities.lighting {
+            continue;
+        }
+        let Some(dp) = active.and_then(|p| p.devices.get(&snap.id)) else { continue };
+        for (zone, settings) in &dp.lighting_zones {
+            if let (Ok(z), Some(fx)) = (zone.parse::<u8>(), settings.software.clone()) {
+                if settings.effect == "screen" || settings.effect == "audio" {
+                    table.insert((snap.id.clone(), z), fx);
+                }
+            }
+        }
+    }
+    sync.set_effects(table);
 }
 
 /// Streams wheel inputs (steering, pedals, buttons) to the frontend at ~30 Hz
