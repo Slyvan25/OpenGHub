@@ -219,6 +219,10 @@ pub struct Settings {
     /// settings screen): power management, low-battery mode, button layout.
     #[serde(default)]
     pub device_settings: std::collections::HashMap<String, DeviceSettings>,
+    /// Application id → the profile to activate for it, when a game has more
+    /// than one (G HUB's "active for application"). Set when the user picks one.
+    #[serde(default)]
+    pub active_profile_per_app: std::collections::HashMap<String, String>,
 }
 
 /// G HUB's per-device settings, kept outside the profiles.
@@ -279,6 +283,7 @@ impl Default for Settings {
             screen_restore_token: None,
             onboard_mode_devices: Vec::new(),
             device_settings: Default::default(),
+            active_profile_per_app: Default::default(),
         }
     }
 }

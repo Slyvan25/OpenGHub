@@ -124,6 +124,8 @@ pub fn run() {
             commands::set_active_profile,
             commands::create_profile,
             commands::delete_profile,
+            commands::rename_profile,
+            commands::duplicate_profile,
             commands::save_device_profile,
             commands::get_device_profile,
             commands::save_settings,
@@ -265,9 +267,11 @@ fn spawn_application_watcher(app: tauri::AppHandle) {
             let persistent = cfg.settings.persistent_profile.as_str();
             let target = match &current {
                 Some(id) => cfg
-                    .profiles
-                    .iter()
-                    .find(|p| !p.disabled && p.application_id.as_deref() == Some(id))
+                    .settings
+                    .active_profile_per_app
+                    .get(id)
+                    .and_then(|pid| cfg.profiles.iter().find(|p| &p.id == pid && !p.disabled))
+                    .or_else(|| cfg.profiles.iter().find(|p| !p.disabled && p.application_id.as_deref() == Some(id)))
                     // A disabled game behaves as if it were not running.
                     .or_else(|| cfg.profiles.iter().find(|p| p.id == persistent)),
                 None => cfg.profiles.iter().find(|p| p.id == persistent),

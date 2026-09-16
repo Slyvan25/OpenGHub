@@ -74,6 +74,39 @@
     }
   }
 
+  /** Card whose name is being edited, and the draft. */
+  let renaming = $state<string | null>(null);
+  let renameDraft = $state("");
+
+  function startRename(p: Profile) {
+    menuFor = null;
+    renaming = p.id;
+    renameDraft = p.id === "default" ? "Desktop" : (p.name.split(":")[1]?.trim() ?? p.name);
+  }
+
+  async function finishRename() {
+    const id = renaming;
+    renaming = null;
+    if (!id) return;
+    const name = renameDraft.trim();
+    if (!name) return;
+    try {
+      await configStore.renameProfile(id, id === "default" ? `Desktop: ${name}` : name);
+    } catch (e) {
+      ui.toast(api.errorMessage(e), "error");
+    }
+  }
+
+  async function duplicate(p: Profile) {
+    menuFor = null;
+    try {
+      await configStore.duplicateProfile(p.id);
+      ui.toast(`Duplicated ${displayName(p)}.`, "success", 2500);
+    } catch (e) {
+      ui.toast(api.errorMessage(e), "error");
+    }
+  }
+
   async function toggleDisabled(p: Profile) {
     menuFor = null;
     try {
@@ -254,7 +287,23 @@
             {/if}
           </div>
 
-          <div class="name">{displayName(p)}</div>
+          {#if renaming === p.id}
+            <!-- svelte-ignore a11y_autofocus -->
+            <input
+              class="name-edit"
+              type="text"
+              bind:value={renameDraft}
+              autofocus
+              onclick={(e) => e.stopPropagation()}
+              onblur={finishRename}
+              onkeydown={(e) => {
+                if (e.key === "Enter") finishRename();
+                if (e.key === "Escape") renaming = null;
+              }}
+            />
+          {:else}
+            <div class="name">{displayName(p)}</div>
+          {/if}
 
           <div class="foot">
             {#if p.id === "default"}
@@ -273,6 +322,8 @@
               </button>
               {#if menuFor === p.id}
                 <div class="menu" role="menu">
+                  <button role="menuitem" onclick={(e) => { e.stopPropagation(); startRename(p); }}>Rename…</button>
+                  <button role="menuitem" onclick={(e) => { e.stopPropagation(); duplicate(p); }}>Duplicate</button>
                   <button role="menuitem" onclick={(e) => { e.stopPropagation(); share(p); }}>Share…</button>
                 </div>
               {/if}
@@ -292,6 +343,8 @@
               </button>
               {#if menuFor === p.id}
                 <div class="menu" role="menu">
+                  <button role="menuitem" onclick={(e) => { e.stopPropagation(); startRename(p); }}>Rename…</button>
+                  <button role="menuitem" onclick={(e) => { e.stopPropagation(); duplicate(p); }}>Duplicate</button>
                   <button role="menuitem" onclick={(e) => { e.stopPropagation(); share(p); }}>
                     Share…
                   </button>
@@ -316,6 +369,19 @@
 </div>
 
 <style>
+  .name-edit {
+    width: 100%;
+    padding: 4px 6px;
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    background: #000;
+    font-family: var(--font);
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text);
+    user-select: text;
+  }
+
   .page {
     display: grid;
     grid-template-columns: 296px minmax(0, 1fr);

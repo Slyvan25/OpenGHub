@@ -347,6 +347,21 @@ export async function mockInvoke<T>(command: string, args: Record<string, unknow
     case "backup_onboard_memory":
       return "~/.local/share/openghub/backups/mock.json" as T;
 
+    case "rename_profile": {
+      const p = config.profiles.find((x) => x.id === args.profileId);
+      if (p) p.name = args.name as string;
+      return persist() as T;
+    }
+    case "duplicate_profile": {
+      const src = config.profiles.find((x) => x.id === args.profileId);
+      if (src) {
+        const id = `p${Date.now()}`;
+        config.profiles.push({ ...structuredClone(src), id, name: `${src.name} Copy`, disabled: false });
+        config.activeProfile = id;
+      }
+      return persist() as T;
+    }
+
     case "get_device_settings":
       return { ...mockDeviceSettings } as T;
     case "set_device_settings":

@@ -390,7 +390,11 @@ pub async fn save_config(store: State<'_, Store>, config: Config) -> Result<Conf
 #[tauri::command]
 pub async fn set_active_profile(app: AppHandle, store: State<'_, Store>, profile_id: String) -> Result<Config> {
     store.update(|cfg| {
-        if cfg.profiles.iter().any(|p| p.id == profile_id) {
+        if let Some(p) = cfg.profiles.iter().find(|p| p.id == profile_id) {
+            // Remember which of a game's profiles the user wants when it runs.
+            if let Some(app_id) = &p.application_id {
+                cfg.settings.active_profile_per_app.insert(app_id.clone(), p.id.clone());
+            }
             cfg.active_profile = profile_id;
         }
     })?;
@@ -423,6 +427,61 @@ pub async fn create_profile(
         });
         cfg.active_profile = id.clone();
     })?;
+    Ok(store.get())
+}
+
+/// Renames a profile. Game profiles keep their "Game: " prefix unless the new
+/// name carries its own.
+#[tauri::command]
+pub async fn rename_profile(store: State<'_, Store>, profile_id: String, name: String) -> Result<Config> {
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err(Error::other("the name cannot be empty"));
+    }
+    store.update(|cfg| {
+        if let Some(p) = cfg.profiles.iter_mut().find(|p| p.id == profile_id) {
+            p.name = match (p.name.split_once(':'), name.contains(':')) {
+                (Some((game, _)), false) if p.id != "default" => format!("{}: {name}", game.trim()),
+                _ => name.clone(),
+            };
+        }
+    })?;
+    Ok(store.get())
+}
+
+/// Copies a profile — devices, assignments, macros, lighting — under a new
+/// id, bound to the same game, and makes it active.
+#[tauri::command]
+pub async fn duplicate_profile(app: AppHandle, store: State<'_, Store>, profile_id: String) -> Result<Config> {
+    let id = format!(
+        "p{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0)
+    );
+    store.update(|cfg| {
+        let Some(src) = cfg.profiles.iter().find(|p| p.id == profile_id).cloned() else { return };
+        let name = match src.name.split_once(':') {
+            Some((game, rest)) if src.id != "default" => format!("{}: {} Copy", game.trim(), rest.trim()),
+            _ => format!("{} Copy", src.name.replace("Desktop: ", "")),
+        };
+        let name = if src.id == "default" { format!("Desktop: {}", name.trim_start_matches("Desktop: ")) } else { name };
+        cfg.profiles.push(Profile {
+            id: id.clone(),
+            name,
+            kind: if src.id == "default" { "game".into() } else { src.kind.clone() },
+            application_id: src.application_id.clone(),
+            poster_url: src.poster_url.clone(),
+            disabled: false,
+            devices: src.devices.clone(),
+        });
+        cfg.active_profile = id.clone();
+        if let Some(app_id) = &src.application_id {
+            cfg.settings.active_profile_per_app.insert(app_id.clone(), id.clone());
+        }
+    })?;
+    crate::apply_all_profiles(&app);
     Ok(store.get())
 }
 

@@ -77,6 +77,14 @@ class ConfigStore {
     this.apply(await api.deleteProfile(id));
   }
 
+  async renameProfile(id: string, name: string) {
+    this.apply(await api.renameProfile(id, name));
+  }
+
+  async duplicateProfile(id: string) {
+    this.apply(await api.duplicateProfile(id));
+  }
+
   async saveSettings(settings: Settings) {
     this.apply(await api.saveSettings(settings));
   }

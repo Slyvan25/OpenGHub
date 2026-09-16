@@ -148,6 +148,10 @@ export const createProfile = (name: string, kind = "game") =>
   call<Config>("create_profile", { name, kind });
 export const deleteProfile = (profileId: string) =>
   call<Config>("delete_profile", { profileId });
+export const renameProfile = (profileId: string, name: string) =>
+  call<Config>("rename_profile", { profileId, name });
+export const duplicateProfile = (profileId: string) =>
+  call<Config>("duplicate_profile", { profileId });
 export const saveDeviceProfile = (deviceId: string, profile: DeviceProfile) =>
   call<Config>("save_device_profile", { deviceId, profile });
 export const getDeviceProfile = (deviceId: string) =>
