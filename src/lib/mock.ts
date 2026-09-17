@@ -185,6 +185,12 @@ const mockWheel = {
   trueforceTorque: 100,
   trueforceAudio: 80,
   trueforceGameControl: true,
+  pedals: {
+    accelerator: { sensitivity: 50, deadZoneLow: 0, deadZoneHigh: 0, inverted: false },
+    brake: { sensitivity: 50, deadZoneLow: 0, deadZoneHigh: 0, inverted: false },
+    clutch: { sensitivity: 50, deadZoneLow: 0, deadZoneHigh: 0, inverted: false },
+    combined: false,
+  },
 };
 
 function persist(): Config {

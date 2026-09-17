@@ -689,9 +689,10 @@ fn run(
             }
             drop(dev);
             if let Some(raw) = latest {
-                let s = super::apply_settings(raw, &settings.lock());
+                let cfg_now = settings.lock().clone();
+                let s = super::apply_settings(raw, &cfg_now);
                 *state.lock() = s;
-                forward(&vdev, &s);
+                forward(&vdev, &s, cfg_now.pedals.combined);
                 last_forward = Instant::now();
             } else if last_forward.elapsed() > Duration::from_millis(1000 / INPUT_POLL_HZ) {
                 // Keep the virtual device "alive" for readers that time out.
@@ -731,9 +732,17 @@ fn spring_commands(percent: u8) -> Vec<[u8; 7]> {
 
 /// Mirrors a state onto the virtual device. Pedals keep Logitech's raw sense
 /// (max = released), as the kernel driver reports them.
-fn forward(vdev: &VirtualDevice, s: &WheelState) {
+fn forward(vdev: &VirtualDevice, s: &WheelState, combined: bool) {
     let steering = (((s.steering + 1.0) / 2.0).clamp(0.0, 1.0) * 65535.0) as i32;
     let pedal = |v: f32| ((1.0 - v).clamp(0.0, 1.0) * 65535.0) as i32;
+    // Combined pedals: one axis, brake below centre, accelerator above.
+    let (accel, brake) = if combined {
+        let mix = ((s.accelerator - s.brake + 1.0) / 2.0).clamp(0.0, 1.0);
+        // The accelerator axis carries the mix; the brake axis reads released.
+        (1.0 - mix, 0.0)
+    } else {
+        (s.accelerator, s.brake)
+    };
     let (hx, hy) = match s.hat {
         0 => (0, -1),
         1 => (1, -1),
@@ -747,8 +756,8 @@ fn forward(vdev: &VirtualDevice, s: &WheelState) {
     };
     let mut events = vec![
         (ui::EV_ABS, ui::ABS_X, steering),
-        (ui::EV_ABS, ui::ABS_Z, pedal(s.accelerator)),
-        (ui::EV_ABS, ui::ABS_RZ, pedal(s.brake)),
+        (ui::EV_ABS, ui::ABS_Z, pedal(accel)),
+        (ui::EV_ABS, ui::ABS_RZ, pedal(brake)),
         (ui::EV_ABS, ui::ABS_Y, pedal(s.clutch)),
         (ui::EV_ABS, ui::ABS_HAT0X, hx),
         (ui::EV_ABS, ui::ABS_HAT0Y, hy),

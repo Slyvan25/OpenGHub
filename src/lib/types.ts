@@ -105,6 +105,21 @@ export interface WheelSettings {
   trueforceTorque: number;
   trueforceAudio: number;
   trueforceGameControl: boolean;
+  pedals: PedalSettings;
+}
+
+export interface PedalCurve {
+  sensitivity: number;
+  deadZoneLow: number;
+  deadZoneHigh: number;
+  inverted: boolean;
+}
+
+export interface PedalSettings {
+  accelerator: PedalCurve;
+  brake: PedalCurve;
+  clutch: PedalCurve;
+  combined: boolean;
 }
 
 export interface Device {

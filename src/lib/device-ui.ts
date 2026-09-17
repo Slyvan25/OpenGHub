@@ -99,7 +99,7 @@ export function zoneGlowsFor(
   });
 }
 
-export type TabId = "sensitivity" | "assignments" | "lighting" | "wheel" | "settings";
+export type TabId = "sensitivity" | "assignments" | "lighting" | "wheel" | "pedals" | "settings";
 
 /**
  * The tabs a device can actually drive, in G HUB's rail order for a mouse:
@@ -111,6 +111,7 @@ export function tabsFor(device: Device): { id: TabId; label: string; icon: IconN
     // G HUB's wheel rail: assignments, then the wheel page.
     tabs.push({ id: "assignments", label: "Assignments", icon: "assignments" });
     tabs.push({ id: "wheel", label: "Steering Wheel", icon: "wheel" });
+    tabs.push({ id: "pedals", label: "Pedals", icon: "pedals" });
     tabs.push({ id: "settings", label: "Settings", icon: "gear" });
     return tabs;
   }

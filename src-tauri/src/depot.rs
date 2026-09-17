@@ -633,6 +633,7 @@ pub fn import_device_files(
     let mut side = "side.png".to_string();
     // Wheels ship the rim (`wheel_image_front`) over a static base.
     let mut base: Option<String> = None;
+    let mut pedals: Option<String> = None;
     let mut metadata = "metadata.json".to_string();
     if let Some(manifest) = get("manifest.json") {
         if let Ok(m) = serde_json::from_slice::<serde_json::Value>(manifest) {
@@ -646,6 +647,7 @@ pub fn import_device_files(
                         (Some("device_image"), Some(src)) => front = src.to_string(),
                         (Some("device_side"), Some(src)) => side = src.to_string(),
                         (Some("wheel_image_base"), Some(src)) => base = Some(src.to_string()),
+                        (Some("pedals_image"), Some(src)) => pedals = Some(src.to_string()),
                         (Some("image_metadata"), Some(src)) => metadata = src.to_string(),
                         _ => {}
                     }
@@ -697,6 +699,11 @@ pub fn import_device_files(
         if let Some(name) = &base {
             if let Some(img) = get(name) {
                 write(&format!("-base.{}", ext_of(name)), img)?;
+            }
+        }
+        if let Some(name) = &pedals {
+            if let Some(img) = get(name) {
+                write(&format!("-pedals.{}", ext_of(name)), img)?;
             }
         }
         if let Some(png) = thumbnail {

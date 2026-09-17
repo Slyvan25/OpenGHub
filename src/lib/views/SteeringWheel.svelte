@@ -35,6 +35,12 @@
     trueforceTorque: 100,
     trueforceAudio: 100,
     trueforceGameControl: true,
+    pedals: {
+      accelerator: { sensitivity: 50, deadZoneLow: 0, deadZoneHigh: 0, inverted: false },
+      brake: { sensitivity: 50, deadZoneLow: 0, deadZoneHigh: 0, inverted: false },
+      clutch: { sensitivity: 50, deadZoneLow: 0, deadZoneHigh: 0, inverted: false },
+      combined: false,
+    },
   };
 
   let settings = $state<WheelSettings>({ ...DEFAULTS });
@@ -91,7 +97,7 @@
   }
 
   function restoreDefaults() {
-    commit({ ...DEFAULTS, rangeDeg: rangeMax, centerOffset: settings.centerOffset });
+    commit({ ...DEFAULTS, rangeDeg: rangeMax, centerOffset: settings.centerOffset, pedals: settings.pedals });
   }
 
   /** Lights the RPM LEDs in a quick chase, so the user knows the channel is live. */

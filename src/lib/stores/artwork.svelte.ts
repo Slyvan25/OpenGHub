@@ -70,6 +70,15 @@ class ArtworkStore {
     return this.forProductIds(productIds);
   }
 
+  /** A wheel's pedal set, when the depot shipped one. */
+  pedalsFor(productIds: number[]): string | null {
+    for (const id of productIds) {
+      const hit = this.images[`${id.toString(16).padStart(4, "0")}-pedals`];
+      if (hit) return hit;
+    }
+    return null;
+  }
+
   /** A wheel's static base, drawn under the rotating rim. */
   baseFor(productIds: number[]): string | null {
     for (const id of productIds) {

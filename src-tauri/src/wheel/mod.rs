@@ -190,6 +190,61 @@ pub struct WheelSettings {
     pub trueforce_audio: u8,
     #[serde(default = "default_true")]
     pub trueforce_game_control: bool,
+    /// Per-pedal response, applied to the virtual axes (G HUB's Pedals panel).
+    #[serde(default)]
+    pub pedals: PedalSettings,
+}
+
+/// One pedal's response curve and dead zones.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PedalCurve {
+    /// 0-100, 50 = linear: below it the pedal responds more at the top of
+    /// its travel, above it more at the start (G HUB's Low / Medium / High).
+    #[serde(default = "default_fifty")]
+    pub sensitivity: u8,
+    /// Travel ignored at the start, 0-40 %.
+    #[serde(default)]
+    pub dead_zone_low: u8,
+    /// Travel treated as fully pressed at the end, 0-40 %.
+    #[serde(default)]
+    pub dead_zone_high: u8,
+    /// Reverse the axis (some sims expect it).
+    #[serde(default)]
+    pub inverted: bool,
+}
+
+impl Default for PedalCurve {
+    fn default() -> Self {
+        PedalCurve { sensitivity: 50, dead_zone_low: 0, dead_zone_high: 0, inverted: false }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PedalSettings {
+    #[serde(default)]
+    pub accelerator: PedalCurve,
+    #[serde(default)]
+    pub brake: PedalCurve,
+    #[serde(default)]
+    pub clutch: PedalCurve,
+    /// Report accelerator and brake as one axis (G HUB's "combined pedals"):
+    /// brake pulls it negative, accelerator pushes it positive.
+    #[serde(default)]
+    pub combined: bool,
+}
+
+impl PedalCurve {
+    /// Maps raw 0..1 travel through the dead zones and the sensitivity curve.
+    pub fn apply(&self, raw: f32) -> f32 {
+        let lo = self.dead_zone_low.min(40) as f32 / 100.0;
+        let hi = 1.0 - self.dead_zone_high.min(40) as f32 / 100.0;
+        let span = (hi - lo).max(0.05);
+        let t = ((raw - lo) / span).clamp(0.0, 1.0);
+        let shaped = sensitivity_curve(t, self.sensitivity);
+        if self.inverted { 1.0 - shaped } else { shaped }
+    }
 }
 
 fn default_range() -> u16 {
@@ -220,6 +275,7 @@ impl Default for WheelSettings {
             trueforce_torque: 100,
             trueforce_audio: 100,
             trueforce_game_control: true,
+            pedals: PedalSettings::default(),
         }
     }
 }
@@ -467,6 +523,9 @@ pub fn apply_settings(mut s: WheelState, settings: &WheelSettings) -> WheelState
     let centred = (s.steering_raw as i32 - 32768 - settings.center_offset as i32).clamp(-32768, 32767);
     let linear = centred as f32 / 32768.0;
     s.steering = sensitivity_curve(linear, settings.sensitivity);
+    s.accelerator = settings.pedals.accelerator.apply(s.accelerator);
+    s.brake = settings.pedals.brake.apply(s.brake);
+    s.clutch = settings.pedals.clutch.apply(s.clutch);
     s
 }
 
@@ -511,6 +570,18 @@ mod tests {
         assert!(sensitivity_curve(0.5, 0) < 0.5);
         assert!(sensitivity_curve(0.5, 100) > 0.5);
         assert!((sensitivity_curve(-1.0, 100) + 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn pedal_curve_dead_zones_and_shape() {
+        let c = PedalCurve { sensitivity: 50, dead_zone_low: 10, dead_zone_high: 10, inverted: false };
+        assert!(c.apply(0.05).abs() < 1e-6, "inside the low dead zone");
+        assert!((c.apply(0.95) - 1.0).abs() < 1e-6, "inside the high dead zone");
+        assert!((c.apply(0.5) - 0.5).abs() < 1e-6, "linear in the middle");
+        let soft = PedalCurve { sensitivity: 20, ..Default::default() };
+        assert!(soft.apply(0.5) < 0.5);
+        let inv = PedalCurve { inverted: true, ..Default::default() };
+        assert!((inv.apply(0.0) - 1.0).abs() < 1e-6);
     }
 
     #[test]

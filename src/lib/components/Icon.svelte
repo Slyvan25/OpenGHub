@@ -127,6 +127,10 @@
       '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M7.5 9l3 3-3 3"/><path d="M12.5 15h4"/>',
     clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
 
+    // G HUB's pedals glyph: three pedal plates.
+    pedals:
+      '<rect x="3.5" y="9" width="4.5" height="10" rx="1"/><rect x="9.75" y="6" width="4.5" height="13" rx="1"/><rect x="16" y="9" width="4.5" height="10" rx="1"/>',
+
     // -- macro types --------------------------------------------------------
     arrowRight: '<path d="M4 12h15"/><path d="M13 6l6 6-6 6"/>',
     repeat: '<path d="M18.5 8.5A7.5 7.5 0 1 0 19.5 14"/><path d="M19.5 4v5h-5"/>',

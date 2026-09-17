@@ -189,6 +189,11 @@ ep`, every write fails `ENOENT`). Another USB port fixed it; the alternative is
 `options usbhid quirks=0x046d:0xc267:0x00040000` in `/etc/modprobe.d/`, which routes output
 reports over the control endpoint.
 
+**Pedals.** The third rail item is G HUB's pedal panel: per pedal a sensitivity preset (Low /
+Medium / High, or the slider behind them), dead zones at both ends and inversion, plus
+"combined pedals" (brake and accelerator on one axis). All of it is applied on the virtual
+wheel's axes in `wheel::apply_settings`, so it works in any game that reads the OpenGHub wheel.
+
 **Proton games.** Proton routes Logitech wheels over hidraw by default (that is what lets the
 TrueForce DLL reach the wheel), and drops the SDL duplicate of anything it hidraw-routes — so a
 Proton game sees the raw wheel and not the OpenGHub one. Over hidraw Wine can only do
