@@ -292,7 +292,7 @@ export async function mockInvoke<T>(command: string, args: Record<string, unknow
       return structuredClone(config) as T;
 
     case "save_config":
-      config = args.config as Config;
+      config = JSON.parse(JSON.stringify(args.config)) as Config;
       return persist() as T;
 
     case "set_active_profile":
@@ -320,7 +320,8 @@ export async function mockInvoke<T>(command: string, args: Record<string, unknow
     }
 
     case "save_device_profile":
-      activeProfile().devices[args.deviceId as string] = args.profile as DeviceProfile;
+      // Svelte state proxies cannot be structuredClone'd; store plain data.
+      activeProfile().devices[args.deviceId as string] = JSON.parse(JSON.stringify(args.profile)) as DeviceProfile;
       return persist() as T;
 
     case "get_device_profile":
@@ -347,7 +348,7 @@ export async function mockInvoke<T>(command: string, args: Record<string, unknow
     }
 
     case "save_settings":
-      config.settings = args.settings as Config["settings"];
+      config.settings = JSON.parse(JSON.stringify(args.settings)) as Config["settings"];
       return persist() as T;
 
     case "apply_onboard_macros":

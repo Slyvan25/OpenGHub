@@ -47,6 +47,20 @@
   const AUDIO_DEFAULT: SoftwareEffect = { kind: "audio", low: "#ff2d2d", mid: "#00b8fc", high: "#ffffff", sensitivity: 60, brightness: 100 };
   let syncStatus = $state<{ activeZones: number; error: string | null; screenAuthorised: boolean } | null>(null);
 
+  /** On-board memory mode refuses live colours, so software effects need host mode. */
+  let leavingOnboard = $state(false);
+  async function leaveOnboardMode() {
+    leavingOnboard = true;
+    try {
+      deviceStore.patch(await api.setOnboardMode(device.id, false));
+      ui.toast(`${device.name}: on-board memory mode off — software effects can run now.`, "success", 3500);
+    } catch (e) {
+      ui.toast(api.errorMessage(e), "error", 6000);
+    } finally {
+      leavingOnboard = false;
+    }
+  }
+
   const DEFAULTS: LightingSettings = {
     effect: "fixed",
     color: "#00b5e2",
@@ -436,7 +450,18 @@
         />
       {/if}
 
-      {#if software}
+      {#if software && device.onboardMode}
+        <div class="onboard-note">
+          <Icon name="onboard" size={16} />
+          <p>
+            <strong>On-board memory mode is on.</strong> The device runs its stored profile and ignores
+            the live colours this effect streams, so it will not react until host mode is back.
+          </p>
+          <button onclick={leaveOnboardMode} disabled={leavingOnboard}>
+            {leavingOnboard ? "Switching…" : "Turn off on-board memory mode"}
+          </button>
+        </div>
+      {:else if software}
         <p class="hint" class:error={!!syncStatus?.error}>
           {#if syncStatus?.error}
             {syncStatus.error}
@@ -680,6 +705,46 @@
 
   .hint.error {
     color: var(--warning);
+  }
+
+  .onboard-note {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 6px 10px;
+    padding: 12px 14px;
+    border: 1px solid rgba(255, 94, 1, 0.45);
+    border-radius: var(--radius);
+    background: rgba(255, 94, 1, 0.08);
+    color: var(--warning);
+  }
+
+  .onboard-note p {
+    margin: 0;
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: var(--text-dim);
+  }
+
+  .onboard-note strong {
+    color: var(--text);
+  }
+
+  .onboard-note button {
+    grid-column: 2;
+    justify-self: start;
+    padding: 6px 12px;
+    border-radius: 4px;
+    background: var(--accent);
+    font-family: var(--font);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #fff;
+  }
+
+  .onboard-note button:hover:not(:disabled) {
+    background: var(--accent-hover);
   }
 
   .bands {

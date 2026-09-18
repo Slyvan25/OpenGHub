@@ -591,12 +591,28 @@ pub fn spawn(app: tauri::AppHandle) {
                 continue;
             }
             let app2 = manager_app.clone();
+            let sync2 = Arc::clone(&sync);
             let _ = tauri::async_runtime::spawn_blocking(move || {
                 let manager = app2.state::<crate::state::DeviceManager>();
+                let mut failed: Option<String> = None;
                 for ((device, zone), rgb) in updates {
                     if let Err(e) = manager.set_lighting(&device, zone, rgb, crate::hidpp::features::LightEffect::Fixed, false) {
                         log::debug!("lightsync write to {device} zone {zone} failed: {e}");
+                        // A device in on-board memory mode refuses live colours;
+                        // say so instead of silently sampling into the void.
+                        let onboard = manager.snapshot(&device).and_then(|s| s.onboard_mode) == Some(true);
+                        failed = Some(if onboard {
+                            "The device is in on-board memory mode, which ignores live lighting. Turn it off to run this effect.".to_string()
+                        } else {
+                            format!("Lighting write failed: {e}")
+                        });
                     }
+                }
+                let mut err = sync2.last_error.lock();
+                match failed {
+                    Some(f) => *err = Some(f),
+                    None if err.as_deref().map(|e| e.starts_with("The device is in on-board") || e.starts_with("Lighting write failed")).unwrap_or(false) => *err = None,
+                    None => {}
                 }
             })
             .await;
