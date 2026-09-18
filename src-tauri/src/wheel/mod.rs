@@ -114,7 +114,9 @@ impl WheelState {
 ///
 /// Verified layout: steering u16 LE at 43, pedals u16 LE at 45/47/49 with
 /// 0xFFFF released, buttons in bytes 5-7 (DualShock order, hat in the low
-/// nibble of byte 5).
+/// nibble of byte 5), and the Driving Force Shifter in byte 51: bits 0-5 are
+/// gears 1-6, bit 7 is reverse (captured on hardware, 2026-09-18). The
+/// shifter lands on buttons 21-28 so the first 20 keep their DualShock order.
 pub fn parse_ps_report(rep: &[u8]) -> Option<WheelState> {
     if rep.len() < 51 || rep[0] != 0x01 {
         return None;
@@ -123,7 +125,8 @@ pub fn parse_ps_report(rep: &[u8]) -> Option<WheelState> {
     let pedal = |i: usize| 1.0 - u16_at(i) as f32 / 65535.0;
     let raw = u16_at(43);
     let hat = rep[5] & 0x0f;
-    let buttons = ((rep[5] >> 4) as u32) | ((rep[6] as u32) << 4) | ((rep[7] as u32) << 12);
+    let shifter = rep.get(51).copied().unwrap_or(0) as u32;
+    let buttons = ((rep[5] >> 4) as u32) | ((rep[6] as u32) << 4) | ((rep[7] as u32) << 12) | (shifter << SHIFTER_BIT);
     Some(WheelState {
         steering_raw: raw,
         steering: (raw as f32 - 32768.0) / 32768.0,
@@ -133,6 +136,20 @@ pub fn parse_ps_report(rep: &[u8]) -> Option<WheelState> {
         buttons,
         hat: if hat > 7 { 8 } else { hat },
     })
+}
+
+/// First button bit used by the H-pattern shifter: gears 1-6 follow, then an
+/// unused bit, then reverse.
+pub const SHIFTER_BIT: u32 = 20;
+
+/// The gear an H-pattern shifter is in: 1-6, `Some(0)` for reverse, `None`
+/// in neutral.
+pub fn gear(buttons: u32) -> Option<u8> {
+    let s = (buttons >> SHIFTER_BIT) & 0xff;
+    if s & 0x80 != 0 {
+        return Some(0);
+    }
+    (0..6u8).find(|g| s & (1 << g) != 0).map(|g| g + 1)
 }
 
 /// Parses a native-mode report (G29 / G27 / G923 PC mode): hat in byte 0's
@@ -562,6 +579,15 @@ mod tests {
         assert!(s.accelerator.abs() < 1e-6);
         assert_eq!(s.hat, 8);
         assert_eq!(s.buttons & 0xf, 0x2);
+        assert_eq!(gear(s.buttons), None);
+
+        // Shifter byte: 3rd gear, then reverse.
+        rep[51] = 0x04;
+        let s = parse_ps_report(&rep).unwrap();
+        assert_eq!(gear(s.buttons), Some(3));
+        assert_eq!(s.buttons >> SHIFTER_BIT, 0x04);
+        rep[51] = 0x80;
+        assert_eq!(gear(parse_ps_report(&rep).unwrap().buttons), Some(0));
     }
 
     #[test]

@@ -44,7 +44,16 @@
   };
 
   let settings = $state<WheelSettings>({ ...DEFAULTS });
+  /** Byte 51 of the PS report lands on buttons 21-28: gears 1-6, then reverse at bit 7. */
+  function gearOf(buttons: number): number | null {
+    const s = (buttons >>> 20) & 0xff;
+    if (s & 0x80) return 0;
+    for (let g = 0; g < 6; g++) if (s & (1 << g)) return g + 1;
+    return null;
+  }
+
   let live = $state<WheelState>({ steeringRaw: 32768, steering: 0, accelerator: 0, brake: 0, clutch: 0, buttons: 0, hat: 8 });
+  const gear = $derived(gearOf(live.buttons));
   let seededFor = $state<string | null>(null);
   let busy = $state(false);
   let testingLeds = $state(false);
@@ -262,6 +271,11 @@
         </div>
       </div>
 
+      <div class="shifter" aria-label="Shifter" title="Driving Force Shifter">
+        <span class="gear" class:neutral={gear === null}>{gear === null ? "N" : gear === 0 ? "R" : gear}</span>
+        <span>Shifter</span>
+      </div>
+
       <div class="pedals" aria-label="Pedals">
         {#each [["Clutch", live.clutch], ["Brake", live.brake], ["Accelerator", live.accelerator]] as [name, v] (name)}
           <div class="pedal">
@@ -275,6 +289,35 @@
 </DeviceWorkspace>
 
 <style>
+  .shifter {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+
+  .gear {
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    border: 2px solid var(--accent);
+    border-radius: 8px;
+    font-size: 22px;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .gear.neutral {
+    border-color: var(--line-strong);
+    color: var(--text-dim);
+  }
+
   .check {
     display: flex;
     align-items: flex-start;

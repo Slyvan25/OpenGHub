@@ -163,7 +163,10 @@ documents. OpenGHub sends the same bytes from `src-tauri/src/wheel/`:
 
 On the G923 (PS mode) they travel as output report `0x30` on the joystick interface; native
 wheels use the id-less report. The steering angle is a 16-bit field the kernel doesn't map to
-evdev, so inputs are read from hidraw too (`u16` at bytes 43–44, pedals at 45/47/49).
+evdev, so inputs are read from hidraw too (`u16` at bytes 43–44, pedals at 45/47/49). The
+Driving Force Shifter plugged into the wheel arrives in byte 51 — bits 0–5 are gears 1–6, bit 7
+is reverse — and is exposed as buttons 21–26 and 28 of the virtual wheel (`BTN_TRIGGER_HAPPY+4…`);
+the Steering Wheel page shows the gear next to the pedal bars.
 
 **Force feedback without a kernel module.** Games upload effects to an event device; only a
 driver can answer. OpenGHub is that driver, in userspace: it creates a virtual wheel on
