@@ -165,6 +165,9 @@ pub struct ButtonEvent {
     pub button: u8,
     pub pressed: bool,
     pub action: Option<Action>,
+    /// From a racing wheel (G HUB numbering) rather than a mouse; scripts
+    /// only hear about mouse buttons.
+    pub wheel: bool,
 }
 
 /// Why the device list came back empty. The dashboard renders a different
@@ -489,7 +492,7 @@ impl DeviceManager {
         }
 
         if inner.wheels.contains_key(id) {
-            let plan = Plan::build(assignments, macros, 28);
+            let plan = Plan::build(assignments, macros, crate::wheel::GHUB_BUTTON_COUNT);
             report.software = !plan.actions.is_empty();
             inner.plans.insert(id.to_string(), plan);
             return Ok(report);
@@ -628,7 +631,7 @@ impl DeviceManager {
                 if !w.bridge_running() {
                     w.poll();
                 }
-                Some(w.state.lock().buttons as u16)
+                Some(crate::wheel::ghub_mask(&w.state.lock()))
             } else if let Some(spy) = inner.spy_index.get(&id).copied() {
                 let events = match inner.handles.get_mut(&id) {
                     Some(h) => h.poll_events(),
@@ -639,7 +642,7 @@ impl DeviceManager {
                 {
                     let plan = inner.plans.get_mut(&id).expect("plan");
                     for ev in events {
-                        if let Some(mask) = features::spy_event_mask(&ev, spy) {
+                        if let Some(mask) = features::spy_event_mask(&ev, spy).map(u32::from) {
                             for (button, pressed) in plan.transitions(mask) {
                                 let action = plan.resolve(button, pressed);
                                 if action == Some(Action::GShift) {
@@ -647,7 +650,7 @@ impl DeviceManager {
                                     swap = Some(if pressed { plan.shift_remapping } else { plan.remapping });
                                     continue;
                                 }
-                                out.push(ButtonEvent { device_id: id.clone(), button, pressed, action });
+                                out.push(ButtonEvent { device_id: id.clone(), button, pressed, action, wheel: false });
                             }
                         }
                     }
@@ -671,7 +674,7 @@ impl DeviceManager {
                         plan.shift_held = pressed;
                         continue;
                     }
-                    out.push(ButtonEvent { device_id: id.clone(), button, pressed, action });
+                    out.push(ButtonEvent { device_id: id.clone(), button, pressed, action, wheel: true });
                 }
             }
         }

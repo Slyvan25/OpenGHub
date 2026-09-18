@@ -145,13 +145,13 @@ pub struct Plan {
     pub remapping: [u8; 16],
     /// The table to load while G-Shift is held.
     pub shift_remapping: [u8; 16],
-    /// Buttons currently pressed, from the last spy report.
-    pub pressed: u16,
+    /// Buttons currently pressed, from the last spy report (bit n = button n+1).
+    pub pressed: u32,
     /// G-Shift is held.
     pub shift_held: bool,
     /// Which layer each pressed button was resolved in, so its release runs
     /// the same action even if the layer changed meanwhile.
-    pub pressed_in_shift: u16,
+    pub pressed_in_shift: u32,
 }
 
 impl Plan {
@@ -212,15 +212,15 @@ impl Plan {
     }
 
     /// Updates the pressed mask and returns the transitions as (button, pressed).
-    pub fn transitions(&mut self, mask: u16) -> Vec<(u8, bool)> {
+    pub fn transitions(&mut self, mask: u32) -> Vec<(u8, bool)> {
         let changed = self.pressed ^ mask;
         self.pressed = mask;
-        (0..16u8).filter(|b| changed & (1 << b) != 0).map(|b| (b, mask & (1 << b) != 0)).collect()
+        (0..32u8).filter(|b| changed & (1 << b) != 0).map(|b| (b, mask & (1 << b) != 0)).collect()
     }
 
     /// Resolves an edge to its action, honouring the layer it was pressed in.
     pub fn resolve(&mut self, button: u8, pressed: bool) -> Option<Action> {
-        let bit = 1u16 << button;
+        let bit = 1u32 << button;
         let shifted = if pressed {
             if self.shift_held {
                 self.pressed_in_shift |= bit;

@@ -142,5 +142,8 @@ export const KEYBOARD_CONTROLS: Record<string, ControlSpot> = Object.fromEntries
 );
 
 export function controlSpots(kind: DeviceKind): Record<string, ControlSpot> {
+  // Wheels have no generic geometry: their controls come from the depot
+  // layout only, so without one nothing is drawn rather than a mouse's dots.
+  if (kind === "wheel") return {};
   return kind === "keyboard" ? KEYBOARD_CONTROLS : MOUSE_CONTROLS;
 }

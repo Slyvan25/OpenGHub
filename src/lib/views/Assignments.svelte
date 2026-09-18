@@ -51,7 +51,61 @@
     fallback: `F${i + 1}`,
   }));
 
-  const controls = $derived(device.kind === "keyboard" ? keyboardControls : mouseControls);
+  /**
+   * G HUB's numbering for the G923 (from its depot layout): the wheel face,
+   * then the Driving Force Shifter (13-19), the extras and the D-pad. The
+   * driver re-numbers the wheel's report to match, so `button-N` here is the
+   * same N the button pump sees.
+   */
+  const wheelControls: Control[] = [
+    { id: "button-1", label: "Cross", fallback: "Cross" },
+    { id: "button-2", label: "Square", fallback: "Square" },
+    { id: "button-3", label: "Circle", fallback: "Circle" },
+    { id: "button-4", label: "Triangle", fallback: "Triangle" },
+    { id: "button-5", label: "Right paddle", fallback: "Gear up" },
+    { id: "button-6", label: "Left paddle", fallback: "Gear down" },
+    { id: "button-7", label: "R2", fallback: "R2" },
+    { id: "button-8", label: "L2", fallback: "L2" },
+    { id: "button-9", label: "Share", fallback: "Share" },
+    { id: "button-10", label: "Options", fallback: "Options" },
+    { id: "button-11", label: "R3", fallback: "R3" },
+    { id: "button-12", label: "L3", fallback: "L3" },
+    { id: "button-13", label: "1st gear", fallback: "1st" },
+    { id: "button-14", label: "2nd gear", fallback: "2nd" },
+    { id: "button-15", label: "3rd gear", fallback: "3rd" },
+    { id: "button-16", label: "4th gear", fallback: "4th" },
+    { id: "button-17", label: "5th gear", fallback: "5th" },
+    { id: "button-18", label: "6th gear", fallback: "6th" },
+    { id: "button-19", label: "Reverse", fallback: "Reverse" },
+    { id: "button-20", label: "+", fallback: "+" },
+    { id: "button-21", label: "−", fallback: "−" },
+    { id: "button-22", label: "Dial right", fallback: "Clockwise" },
+    { id: "button-23", label: "Dial left", fallback: "Counterclockwise" },
+    { id: "button-24", label: "Enter", fallback: "Select" },
+    { id: "button-25", label: "PS", fallback: "PS" },
+    { id: "button-26", label: "D-pad up", fallback: "DPad Up" },
+    { id: "button-27", label: "D-pad up/right", fallback: "DPad Up/Right" },
+    { id: "button-28", label: "D-pad right", fallback: "DPad Right" },
+    { id: "button-29", label: "D-pad down/right", fallback: "DPad Down/Right" },
+    { id: "button-30", label: "D-pad down", fallback: "DPad Down" },
+    { id: "button-31", label: "D-pad down/left", fallback: "DPad Down/Left" },
+    { id: "button-32", label: "D-pad left", fallback: "DPad Left" },
+    { id: "button-33", label: "D-pad up/left", fallback: "DPad Up/Left" },
+    // The pedals are axes: shown so the set is complete, shaped on the Pedals tab.
+    { id: "pedal-clutch", label: "Clutch", fallback: "Clutch axis" },
+    { id: "pedal-brake", label: "Brake", fallback: "Brake axis" },
+    { id: "pedal-accelerator", label: "Accelerator", fallback: "Accelerator axis" },
+  ];
+
+  const PEDAL_SPOTS: Record<string, ControlSpot> = {
+    "pedal-clutch": { dot: { x: 0.2, y: 0.4 }, label: { x: -0.06, y: 0.3 }, side: "left" },
+    "pedal-brake": { dot: { x: 0.5, y: 0.38 }, label: { x: -0.06, y: 0.55 }, side: "left" },
+    "pedal-accelerator": { dot: { x: 0.8, y: 0.4 }, label: { x: 1.06, y: 0.3 }, side: "right" },
+  };
+
+  const controls = $derived(
+    device.kind === "keyboard" ? keyboardControls : device.kind === "wheel" ? wheelControls : mouseControls,
+  );
 
   interface Command {
     category: Assignment["category"];
@@ -232,6 +286,10 @@
   }
 
   async function assign(controlId: string, command: Command) {
+    if (controlId.startsWith("pedal-")) {
+      ui.toast(`${controlLabel(controlId)} is an axis — set its curve and dead zones on the Pedals tab.`, "info", 4000);
+      return;
+    }
     const key = keyFor(controlId);
     const next = assignments.filter((a) => a.control !== key);
     if (command.value !== "") {
@@ -423,10 +481,18 @@
    * table does not know. Otherwise the per-category guesses apply.
    */
   const layout = $derived(artwork.layoutFor(artworkIds(device)));
-  /** `front` or `side`; G HUB switches with ◀ ▶ when the depot has both. */
-  let view = $state<"front" | "side">("front");
-  const views = $derived<("front" | "side")[]>((layout?.views.map((v) => v.view) as ("front" | "side")[] | undefined) ?? ["front"]);
+  type View = "front" | "side" | "shifter" | "pedals";
+  /** `front` / `side` for mice, plus a wheel's `shifter` and `pedals`. */
+  let view = $state<View>("front");
+  const views = $derived<View[]>((layout?.views.map((v) => v.view) as View[] | undefined) ?? ["front"]);
   const layoutView = $derived(layout?.views.find((v) => v.view === view) ?? null);
+  const viewLabels: Record<View, string> = { front: "Wheel", side: "Side", shifter: "Shifter", pedals: "Pedals" };
+
+  // Another device may not have the view that was open — a mouse's side view
+  // on a wheel — and drawing a stale one put the wrong callouts on the render.
+  $effect(() => {
+    if (!views.includes(view)) view = views[0] ?? "front";
+  });
 
   /**
    * Button positions. An imported G HUB layout is authoritative and replaces
@@ -437,6 +503,30 @@
   const spots = $derived.by<Record<string, ControlSpot>>(() => {
     if (!layoutView) return controlSpots(device.kind);
     const exact: Record<string, ControlSpot> = {};
+    if (device.kind === "wheel") {
+      if (view === "pedals") return PEDAL_SPOTS;
+      // G HUB zooms into a wheel's clusters (the D-pad, the face buttons) and
+      // labels them in place; without those insets the labels overlap, so
+      // stack them in the margins instead — left column for the left half,
+      // right for the right, top to bottom in marker order (the H-pattern
+      // reads gate by gate, so the shifter sorts by column first).
+      for (const side of ["left", "right"] as const) {
+        const column = layoutView.controls
+          .filter((c) => (side === "left" ? c.markerX < 0.5 : c.markerX >= 0.5))
+          .sort((a, b) =>
+            view === "shifter" ? a.markerX - b.markerX || a.markerY - b.markerY : a.markerY - b.markerY || a.markerX - b.markerX,
+          );
+        const step = column.length > 1 ? 0.9 / (column.length - 1) : 0;
+        column.forEach((c, i) => {
+          exact[c.control] = {
+            dot: { x: c.markerX, y: c.markerY },
+            label: { x: side === "left" ? -0.06 : 1.06, y: 0.05 + i * step },
+            side,
+          };
+        });
+      }
+      return exact;
+    }
     for (const c of layoutView.controls) {
       exact[c.control] = {
         dot: { x: c.markerX, y: c.markerY },
@@ -598,7 +688,9 @@
       {#if views.length > 1}
         <div class="views">
           {#each views as v, i (v)}
-            <button class="view-pill" class:active={view === v} onclick={() => (view = v)}>View {i + 1}</button>
+            <button class="view-pill" class:active={view === v} onclick={() => (view = v)}>
+              {device.kind === "wheel" ? viewLabels[v] : `View ${i + 1}`}
+            </button>
           {/each}
         </div>
       {/if}

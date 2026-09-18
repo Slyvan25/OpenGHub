@@ -394,16 +394,25 @@ fn spawn_button_pump(app: tauri::AppHandle) {
         .name("button-pump".into())
         .spawn(move || loop {
             std::thread::sleep(Duration::from_millis(4));
-            let events = app.state::<DeviceManager>().pump_button_events();
-            if events.is_empty() {
-                continue;
-            }
-            let scripting = app.state::<std::sync::Arc<scripting::Scripting>>();
-            for ev in events {
-                scripting.mouse_button(ev.button, ev.pressed);
-                if ev.action.is_some() {
-                    perform(&app, ev);
+            // A panic here would silently kill every assignment; keep pumping.
+            let tick = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let events = app.state::<DeviceManager>().pump_button_events();
+                if events.is_empty() {
+                    return;
                 }
+                let scripting = app.state::<std::sync::Arc<scripting::Scripting>>();
+                for ev in events {
+                    if !ev.wheel {
+                        scripting.mouse_button(ev.button, ev.pressed);
+                    }
+                    if ev.action.is_some() {
+                        perform(&app, ev);
+                    }
+                }
+            }));
+            if tick.is_err() {
+                log::error!("button pump tick panicked; continuing");
+                std::thread::sleep(Duration::from_millis(250));
             }
         })
         .expect("button pump thread");

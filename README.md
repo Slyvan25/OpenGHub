@@ -166,7 +166,14 @@ wheels use the id-less report. The steering angle is a 16-bit field the kernel d
 evdev, so inputs are read from hidraw too (`u16` at bytes 43–44, pedals at 45/47/49). The
 Driving Force Shifter plugged into the wheel arrives in byte 51 — bits 0–5 are gears 1–6, bit 7
 is reverse — and is exposed as buttons 21–26 and 28 of the virtual wheel (`BTN_TRIGGER_HAPPY+4…`);
-the Steering Wheel page shows the gear next to the pedal bars.
+the Steering Wheel page shows the gear next to the pedal bars. The wheel's own extras are in
+byte 54 (Enter, dial left, dial right, −, +) and become buttons 14–18.
+
+For assignments the driver re-numbers all of that the way G HUB does (its `gN` slots, read off
+the depot's marker positions): 1 ✕, 2 □, 3 ○, 4 △, 5/6 right/left paddle, 7 R2, 8 L2, 9 Share,
+10 Options, 11 R3, 12 L3, 13–18 gears, 19 reverse, 20 +, 21 −, 22/23 dial right/left, 24 Enter,
+25 PS, 26–33 D-pad. The Assignments page shows the wheel, the shifter and the pedals as separate
+views with those names; the pedals are axes and are shaped on the Pedals tab instead.
 
 **Force feedback without a kernel module.** Games upload effects to an event device; only a
 driver can answer. OpenGHub is that driver, in userspace: it creates a virtual wheel on

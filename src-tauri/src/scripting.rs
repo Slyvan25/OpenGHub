@@ -55,7 +55,7 @@ pub struct Scripting {
     log: Arc<Mutex<VecDeque<String>>>,
     /// Buttons currently pressed on the mouse, kept up to date by the pump so
     /// `IsMouseButtonPressed` can answer without asking the device.
-    pressed: Arc<Mutex<u16>>,
+    pressed: Arc<Mutex<u32>>,
     /// `EnablePrimaryMouseButtonEvents(true)` — off by default, as in G HUB.
     primary_events: Arc<Mutex<bool>>,
     host_tx: Mutex<Option<Sender<HostRequest>>>,
@@ -116,6 +116,9 @@ impl Scripting {
 
     /// Forwards a button edge to the script, if one is running.
     pub fn mouse_button(&self, button: u8, pressed: bool) {
+        if button >= 32 {
+            return;
+        }
         {
             let mut p = self.pressed.lock();
             if pressed {
@@ -214,7 +217,7 @@ fn run(
     source: String,
     rx: Receiver<ScriptEvent>,
     log: Arc<Mutex<VecDeque<String>>>,
-    pressed: Arc<Mutex<u16>>,
+    pressed: Arc<Mutex<u32>>,
     primary: Arc<Mutex<bool>>,
     injector: Arc<Injector>,
     host: Sender<HostRequest>,
@@ -338,7 +341,7 @@ fn run(
     }
     {
         let pressed = Arc::clone(&pressed);
-        reg!("IsMouseButtonPressed", move |_, n: u8| Ok(n >= 1 && (*pressed.lock() >> (n - 1)) & 1 == 1));
+        reg!("IsMouseButtonPressed", move |_, n: u8| Ok((1..=32).contains(&n) && (*pressed.lock() >> (n - 1)) & 1 == 1));
     }
     {
         let inj = Arc::clone(&injector);

@@ -112,11 +112,16 @@ impl WheelState {
 
 /// Parses an input report from a wheel in G923 PS mode (report id 1, 63 bytes).
 ///
-/// Verified layout: steering u16 LE at 43, pedals u16 LE at 45/47/49 with
-/// 0xFFFF released, buttons in bytes 5-7 (DualShock order, hat in the low
-/// nibble of byte 5), and the Driving Force Shifter in byte 51: bits 0-5 are
-/// gears 1-6, bit 7 is reverse (captured on hardware, 2026-09-18). The
-/// shifter lands on buttons 21-28 so the first 20 keep their DualShock order.
+/// Layout, all captured on hardware (2026-09-18): steering u16 LE at 43,
+/// pedals u16 LE at 45/47/49 with 0xFFFF released; hat in byte 5's low
+/// nibble; buttons in DualShock order — byte 5 high nibble □ ✕ ○ △, byte 6
+/// L1/R1 (the paddles), L2, R2, Share, Options, L3, R3, byte 7 bit 0 PS;
+/// the wheel's own extras in byte 54 — bit 0 Enter (dial press), 1 dial
+/// left, 2 dial right, 3 −, 4 +; the Driving Force Shifter in byte 51 —
+/// bits 0-5 gears 1-6, bit 7 reverse.
+///
+/// The mask keeps that order: bits 0-12 DualShock, 13-17 the extras, 20-27
+/// the shifter. `ghub_mask` re-numbers it the way G HUB does.
 pub fn parse_ps_report(rep: &[u8]) -> Option<WheelState> {
     if rep.len() < 51 || rep[0] != 0x01 {
         return None;
@@ -126,7 +131,12 @@ pub fn parse_ps_report(rep: &[u8]) -> Option<WheelState> {
     let raw = u16_at(43);
     let hat = rep[5] & 0x0f;
     let shifter = rep.get(51).copied().unwrap_or(0) as u32;
-    let buttons = ((rep[5] >> 4) as u32) | ((rep[6] as u32) << 4) | ((rep[7] as u32) << 12) | (shifter << SHIFTER_BIT);
+    let extras = (rep.get(54).copied().unwrap_or(0) & 0x1f) as u32;
+    let buttons = ((rep[5] >> 4) as u32)
+        | ((rep[6] as u32) << 4)
+        | ((rep[7] & 0x01) as u32) << 12
+        | (extras << EXTRAS_BIT)
+        | (shifter << SHIFTER_BIT);
     Some(WheelState {
         steering_raw: raw,
         steering: (raw as f32 - 32768.0) / 32768.0,
@@ -141,6 +151,62 @@ pub fn parse_ps_report(rep: &[u8]) -> Option<WheelState> {
 /// First button bit used by the H-pattern shifter: gears 1-6 follow, then an
 /// unused bit, then reverse.
 pub const SHIFTER_BIT: u32 = 20;
+/// First bit of the wheel's extras: Enter, dial left, dial right, −, +.
+pub const EXTRAS_BIT: u32 = 13;
+
+/// How G HUB numbers the G923's controls (its `gN` slots, from the depot's
+/// marker positions on the render): 1 ✕, 2 □, 3 ○, 4 △, 5 right paddle,
+/// 6 left paddle, 7 R2, 8 L2, 9 Share, 10 Options, 11 R3, 12 L3, 13-18 gears
+/// 1-6, 19 reverse, 20 +, 21 −, 22 dial right, 23 dial left, 24 Enter, 25 PS,
+/// 26-33 D-pad up, up-right, right, down-right, down, down-left, left,
+/// up-left. Assignments use these numbers (`button-N`).
+pub const GHUB_BUTTON_COUNT: u8 = 33;
+
+/// Raw mask bit for G HUB button `n` (1-based), `None` for the D-pad.
+const GHUB_TO_RAW: [Option<u32>; 25] = [
+    Some(1),  // 1 ✕
+    Some(0),  // 2 □
+    Some(2),  // 3 ○
+    Some(3),  // 4 △
+    Some(5),  // 5 right paddle (R1)
+    Some(4),  // 6 left paddle (L1)
+    Some(7),  // 7 R2
+    Some(6),  // 8 L2
+    Some(8),  // 9 Share
+    Some(9),  // 10 Options
+    Some(11), // 11 R3
+    Some(10), // 12 L3
+    Some(20), // 13 1st
+    Some(21), // 14 2nd
+    Some(22), // 15 3rd
+    Some(23), // 16 4th
+    Some(24), // 17 5th
+    Some(25), // 18 6th
+    Some(27), // 19 reverse
+    Some(17), // 20 +
+    Some(16), // 21 −
+    Some(15), // 22 dial right
+    Some(14), // 23 dial left
+    Some(13), // 24 Enter
+    Some(12), // 25 PS
+];
+
+/// The state's buttons re-numbered as G HUB does (bit n-1 = button n), with
+/// the D-pad's eight directions as buttons 26-33 from the hat.
+pub fn ghub_mask(s: &WheelState) -> u32 {
+    let mut out = 0u32;
+    for (i, raw) in GHUB_TO_RAW.iter().enumerate() {
+        if let Some(bit) = raw {
+            if s.buttons & (1 << bit) != 0 {
+                out |= 1 << i;
+            }
+        }
+    }
+    if s.hat < 8 {
+        out |= 1 << (25 + s.hat as u32);
+    }
+    out
+}
 
 /// The gear an H-pattern shifter is in: 1-6, `Some(0)` for reverse, `None`
 /// in neutral.
@@ -588,6 +654,31 @@ mod tests {
         assert_eq!(s.buttons >> SHIFTER_BIT, 0x04);
         rep[51] = 0x80;
         assert_eq!(gear(parse_ps_report(&rep).unwrap().buttons), Some(0));
+    }
+
+    #[test]
+    fn ghub_numbering_matches_the_capture() {
+        let mut rep = vec![0u8; 63];
+        rep[0] = 0x01;
+        rep[44] = 0x80;
+        for i in 45..51 {
+            rep[i] = 0xff;
+        }
+        // Square + Enter + 3rd gear, hat up.
+        rep[5] = 0x10;
+        rep[54] = 0x01;
+        rep[51] = 0x04;
+        let s = parse_ps_report(&rep).unwrap();
+        let m = ghub_mask(&s);
+        let has = |n: u32| m & (1 << (n - 1)) != 0;
+        assert!(has(2) && has(24) && has(15) && has(26), "{m:#x}");
+        assert_eq!(m.count_ones(), 4);
+        // Dial right and + live in byte 54.
+        rep[5] = 0x08;
+        rep[51] = 0;
+        rep[54] = 0x14;
+        let m = ghub_mask(&parse_ps_report(&rep).unwrap());
+        assert_eq!(m, (1 << 21) | (1 << 19));
     }
 
     #[test]

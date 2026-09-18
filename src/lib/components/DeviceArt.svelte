@@ -45,8 +45,11 @@
      * back to the SVG when there is no file, or when one fails to decode.
      */
     productIds?: number[];
-    /** `thumb` for dashboard cards (G HUB ships a separate small render). */
-    variant?: "front" | "thumb" | "side";
+    /**
+     * `thumb` for dashboard cards (G HUB ships a separate small render);
+     * `shifter` / `pedals` are a wheel's accessories.
+     */
+    variant?: "front" | "thumb" | "side" | "shifter" | "pedals";
     class?: string;
   }
 
@@ -69,6 +72,8 @@
     if (productIds.length === 0 || imageFailed) return null;
     if (variant === "thumb") return artwork.thumbFor(productIds);
     if (variant === "side") return artwork.sideFor(productIds) ?? artwork.forProductIds(productIds);
+    if (variant === "shifter") return artwork.shifterFor(productIds);
+    if (variant === "pedals") return artwork.pedalsFor(productIds);
     return artwork.forProductIds(productIds);
   });
 
@@ -80,7 +85,7 @@
   const layoutView = $derived.by(() => {
     const layout = artwork.layoutFor(zoneProductIds);
     if (!layout) return null;
-    const want = variant === "side" ? "side" : "front";
+    const want = variant === "thumb" ? "front" : variant;
     return layout.views.find((v) => v.view === want) ?? layout.views[0] ?? null;
   });
 

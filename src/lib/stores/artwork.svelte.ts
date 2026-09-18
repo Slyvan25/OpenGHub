@@ -79,6 +79,15 @@ class ArtworkStore {
     return null;
   }
 
+  /** A wheel's H-pattern shifter, when the depot shipped one. */
+  shifterFor(productIds: number[]): string | null {
+    for (const id of productIds) {
+      const hit = this.images[`${id.toString(16).padStart(4, "0")}-shifter`];
+      if (hit) return hit;
+    }
+    return null;
+  }
+
   /** A wheel's static base, drawn under the rotating rim. */
   baseFor(productIds: number[]): string | null {
     for (const id of productIds) {

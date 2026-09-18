@@ -559,7 +559,15 @@ export async function mockInvoke<T>(command: string, args: Record<string, unknow
       return persist() as T;
     }
 
-    case "get_artwork_layout":
+    case "get_artwork_layout": {
+      const ids = args.productIds as number[];
+      for (const id of ids) {
+        const key = id.toString(16).padStart(4, "0");
+        const r = await fetch(`/__mock-artwork/${key}.layout.json`).catch(() => null);
+        if (r?.ok) return (await r.json()) as T;
+      }
+      return null as T;
+    }
     case "get_ghub_cache_info":
       return null as T;
 
@@ -569,8 +577,17 @@ export async function mockInvoke<T>(command: string, args: Record<string, unknow
     case "fetch_device_artwork":
       throw "fetching artwork needs the desktop app";
 
-    case "get_artwork":
-      return {} as T;
+    case "get_artwork": {
+      // The dev server exposes this user's fetched artwork (see vite.config.js).
+      const r = await fetch("/__mock-artwork/index.json").catch(() => null);
+      const files: string[] = r?.ok ? await r.json() : [];
+      const map: Record<string, string> = {};
+      for (const f of files) {
+        const stem = f.replace(/\.(png|webp|jpe?g|json)$/, "");
+        map[stem] = `/__mock-artwork/${f}`;
+      }
+      return map as T;
+    }
 
     case "get_artwork_dir":
       return "~/.local/share/OpenGHub/devices (mock — running outside Tauri)" as T;
