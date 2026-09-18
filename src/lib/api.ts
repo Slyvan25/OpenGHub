@@ -32,6 +32,7 @@ import type {
   SoftwareEffect,
   LightSyncStatus,
   DeviceSettings,
+  ScriptStatus,
 } from "./types";
 
 export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -118,6 +119,7 @@ export const exportProfile = (profileId: string, deviceId: string, description: 
   call<string>("export_profile", { profileId, deviceId, description });
 export const writeTextFile = (path: string, contents: string) =>
   call<void>("write_text_file", { path, contents });
+export const readTextFile = (path: string) => call<string>("read_text_file", { path });
 
 // -- onboard profiles ------------------------------------------------------
 
@@ -152,6 +154,11 @@ export const renameProfile = (profileId: string, name: string) =>
   call<Config>("rename_profile", { profileId, name });
 export const duplicateProfile = (profileId: string) =>
   call<Config>("duplicate_profile", { profileId });
+export const setProfileScript = (profileId: string, script: string | null) =>
+  call<Config>("set_profile_script", { profileId, script });
+export const getScriptLog = () => call<string[]>("get_script_log");
+export const clearScriptLog = () => call<void>("clear_script_log");
+export const getScriptStatus = () => call<ScriptStatus>("get_script_status");
 export const saveDeviceProfile = (deviceId: string, profile: DeviceProfile) =>
   call<Config>("save_device_profile", { deviceId, profile });
 export const getDeviceProfile = (deviceId: string) =>

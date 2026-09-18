@@ -8,6 +8,7 @@
   import DeviceArt from "$lib/components/DeviceArt.svelte";
   import GamePicker from "$lib/components/GamePicker.svelte";
   import Icon from "$lib/components/Icon.svelte";
+  import ScriptEditor from "$lib/components/ScriptEditor.svelte";
   import { artworkIds } from "$lib/device-ui";
   import { configStore } from "$lib/stores/config.svelte";
   import { deviceStore } from "$lib/stores/devices.svelte";
@@ -20,6 +21,13 @@
   let adding = $state(false);
   /** Card whose ⋮ menu is open. */
   let menuFor = $state<string | null>(null);
+  /** Profile whose Lua script is open in the editor. */
+  let scripting = $state<Profile | null>(null);
+
+  function openScripting(p: Profile) {
+    menuFor = null;
+    scripting = p;
+  }
 
   const profiles = $derived(configStore.profiles);
   const counts = $derived({
@@ -324,6 +332,9 @@
                 <div class="menu" role="menu">
                   <button role="menuitem" onclick={(e) => { e.stopPropagation(); startRename(p); }}>Rename…</button>
                   <button role="menuitem" onclick={(e) => { e.stopPropagation(); duplicate(p); }}>Duplicate</button>
+                  <button role="menuitem" onclick={(e) => { e.stopPropagation(); openScripting(p); }}>
+                    Scripting…{#if p.script}<span class="dot" title="Has a script"></span>{/if}
+                  </button>
                   <button role="menuitem" onclick={(e) => { e.stopPropagation(); share(p); }}>Share…</button>
                 </div>
               {/if}
@@ -345,6 +356,9 @@
                 <div class="menu" role="menu">
                   <button role="menuitem" onclick={(e) => { e.stopPropagation(); startRename(p); }}>Rename…</button>
                   <button role="menuitem" onclick={(e) => { e.stopPropagation(); duplicate(p); }}>Duplicate</button>
+                  <button role="menuitem" onclick={(e) => { e.stopPropagation(); openScripting(p); }}>
+                    Scripting…{#if p.script}<span class="dot" title="Has a script"></span>{/if}
+                  </button>
                   <button role="menuitem" onclick={(e) => { e.stopPropagation(); share(p); }}>
                     Share…
                   </button>
@@ -368,7 +382,32 @@
   </section>
 </div>
 
+{#if scripting}
+  {#key scripting.id}
+    <ScriptEditor
+      profile={scripting}
+      active={scripting.id === configStore.activeProfileId}
+      onsaved={async () => {
+        await configStore.load();
+        const id = scripting?.id;
+        scripting = configStore.profiles.find((p) => p.id === id) ?? null;
+      }}
+      onclose={() => (scripting = null)}
+    />
+  {/key}
+{/if}
+
 <style>
+  .menu .dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    margin-left: 8px;
+    border-radius: 50%;
+    background: var(--accent);
+    vertical-align: middle;
+  }
+
   .name-edit {
     width: 100%;
     padding: 4px 6px;

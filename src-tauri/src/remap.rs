@@ -187,12 +187,15 @@ impl Plan {
         }
         // Never leave a mouse without a primary click: if nothing emits
         // button 1 any more, button 1 keeps its own job whatever was assigned.
-        if button_count > 0 && !plan.remapping[..button_count as usize].contains(&1) {
+        // (Wheels report more buttons than the 16-entry table; only the table
+        // matters here.)
+        let n = (button_count as usize).min(plan.remapping.len());
+        if n > 0 && !plan.remapping[..n].contains(&1) {
             log::warn!("assignments leave no primary click; keeping button 1 as the primary click");
             plan.remapping[0] = 1;
             plan.actions.remove(&0);
         }
-        if button_count > 0 && !plan.shift_remapping[..button_count as usize].contains(&1) {
+        if n > 0 && !plan.shift_remapping[..n].contains(&1) {
             plan.shift_remapping[0] = 1;
             plan.shift_actions.remove(&0);
         }
@@ -303,6 +306,16 @@ impl Injector {
         self.with_device(|d| d.emit(&[(ui::EV_KEY, code, down as i32)]))
     }
 
+    /// Relative pointer motion, for scripts.
+    pub fn move_rel(&self, dx: i32, dy: i32) -> std::io::Result<()> {
+        self.with_device(|d| d.emit(&[(ui::EV_REL, ui::REL_X, dx), (ui::EV_REL, ui::REL_Y, dy)]))
+    }
+
+    /// Scroll wheel notches (positive = up) and horizontal scroll.
+    pub fn scroll(&self, vertical: i32, horizontal: i32) -> std::io::Result<()> {
+        self.with_device(|d| d.emit(&[(ui::EV_REL, ui::REL_WHEEL, vertical), (ui::EV_REL, ui::REL_HWHEEL, horizontal)]))
+    }
+
     /// Plays macro steps on a separate thread so delays never block the pump.
     pub fn play_macro(self: &Arc<Self>, steps: Vec<MacroStep>) {
         let me = Arc::clone(self);
@@ -327,6 +340,12 @@ impl Injector {
                 std::thread::sleep(Duration::from_millis(1));
             }
         });
+    }
+
+    /// Whether any of `codes` is currently held through this keyboard.
+    pub fn is_held(&self, codes: &[u16]) -> bool {
+        let held = self.held.lock();
+        codes.iter().any(|c| held.contains(c))
     }
 
     /// Releases anything still held — on device loss or shutdown.
@@ -385,6 +404,13 @@ mod tests {
         assert_eq!(plan.remapping[0], 0);
         assert_eq!(plan.remapping[3], 1);
         assert!(plan.actions.get(&0).is_some());
+    }
+
+    #[test]
+    fn wheel_button_counts_exceed_the_table() {
+        // A G923 has 28 buttons; the plan must not index past the 16-entry table.
+        let plan = Plan::build(&[a("button-20", "command", "ctrl+c")], &[], 28);
+        assert!(plan.actions.contains_key(&19));
     }
 
     #[test]

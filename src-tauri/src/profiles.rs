@@ -158,6 +158,9 @@ pub struct Profile {
     pub disabled: bool,
     #[serde(default)]
     pub devices: std::collections::HashMap<String, DeviceProfile>,
+    /// Lua script run while this profile is active (G HUB's Scripting).
+    #[serde(default)]
+    pub script: Option<String>,
 }
 
 impl Profile {
@@ -170,6 +173,7 @@ impl Profile {
             poster_url: None,
             disabled: false,
             devices: Default::default(),
+            script: None,
         }
     }
 }

@@ -424,6 +424,7 @@ pub async fn create_profile(
             poster_url: None,
             disabled: false,
             devices: Default::default(),
+            script: None,
         });
         cfg.active_profile = id.clone();
     })?;
@@ -475,6 +476,7 @@ pub async fn duplicate_profile(app: AppHandle, store: State<'_, Store>, profile_
             poster_url: src.poster_url.clone(),
             disabled: false,
             devices: src.devices.clone(),
+            script: src.script.clone(),
         });
         cfg.active_profile = id.clone();
         if let Some(app_id) = &src.application_id {
@@ -728,6 +730,7 @@ pub async fn import_ghub_settings(
                             poster_url: game.and_then(|g| g.poster_url.clone()),
                             disabled: false,
                             devices: Default::default(),
+                            script: None,
                         });
                         id
                     }
@@ -854,9 +857,88 @@ pub async fn apply_assignments(
         .and_then(|p| p.devices.get(&device_id))
         .cloned()
         .unwrap_or_default();
-    let report = manager.apply_assignments(&device_id, &dp.assignments, &dp.macros)?;
+    let script_active = cfg
+        .profiles
+        .iter()
+        .find(|p| p.id == cfg.active_profile)
+        .and_then(|p| p.script.as_deref())
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false);
+    let report = manager.apply_assignments(&device_id, &dp.assignments, &dp.macros, script_active)?;
     emit_device_update(&app, &manager, &device_id);
     Ok(report)
+}
+
+// ---------------------------------------------------------------------------
+// Lua scripting
+// ---------------------------------------------------------------------------
+
+use crate::scripting::Scripting;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScriptStatus {
+    pub running: bool,
+    /// Profile whose script is running, if any.
+    pub profile_id: Option<String>,
+    /// Devices in on-board memory mode: their buttons never reach the host,
+    /// so the script does not see them.
+    pub onboard_devices: Vec<String>,
+}
+
+/// Saves a profile's Lua script. When that profile is active the script is
+/// (re)started right away — G HUB's "Save & Run"; an empty script stops it.
+#[tauri::command]
+pub async fn set_profile_script(
+    app: AppHandle,
+    store: State<'_, Store>,
+    scripting: State<'_, std::sync::Arc<Scripting>>,
+    profile_id: String,
+    script: Option<String>,
+) -> Result<Config> {
+    let script = script.filter(|s| !s.trim().is_empty());
+    store.update(|cfg| {
+        if let Some(p) = cfg.profiles.iter_mut().find(|p| p.id == profile_id) {
+            p.script = script.clone();
+        }
+    })?;
+    let cfg = store.get();
+    if cfg.active_profile == profile_id {
+        match &script {
+            Some(src) => crate::start_script(&app, &profile_id, src),
+            None => scripting.stop(),
+        }
+        // The spy has to be on for the script to hear buttons, off again once
+        // nothing needs it.
+        crate::apply_assignment_profiles(&app);
+    }
+    let _ = app.emit(EVENT_CONFIG_CHANGED, cfg.clone());
+    Ok(cfg)
+}
+
+#[tauri::command]
+pub async fn get_script_log(scripting: State<'_, std::sync::Arc<Scripting>>) -> Result<Vec<String>> {
+    Ok(scripting.log_lines())
+}
+
+#[tauri::command]
+pub async fn clear_script_log(scripting: State<'_, std::sync::Arc<Scripting>>) -> Result<()> {
+    scripting.clear_log();
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_script_status(
+    manager: State<'_, DeviceManager>,
+    scripting: State<'_, std::sync::Arc<Scripting>>,
+) -> Result<ScriptStatus> {
+    let onboard_devices = manager
+        .snapshots()
+        .into_iter()
+        .filter(|s| s.online && s.onboard_mode == Some(true))
+        .map(|s| s.name)
+        .collect();
+    Ok(ScriptStatus { running: scripting.is_running(), profile_id: scripting.active_profile(), onboard_devices })
 }
 
 // ---------------------------------------------------------------------------
@@ -1111,6 +1193,7 @@ pub async fn import_community_profile(
             poster_url: None,
             disabled: false,
             devices,
+            script: None,
         });
     })?;
     Ok(store.get())
@@ -1168,6 +1251,12 @@ pub async fn export_profile(
 #[tauri::command]
 pub async fn write_text_file(path: String, contents: String) -> Result<()> {
     std::fs::write(&path, contents).map_err(|e| Error::other(format!("could not write {path}: {e}")))
+}
+
+/// Reads a file the user picked in the open dialog (Lua script import).
+#[tauri::command]
+pub async fn read_text_file(path: String) -> Result<String> {
+    std::fs::read_to_string(&path).map_err(|e| Error::other(format!("could not read {path}: {e}")))
 }
 
 // ---------------------------------------------------------------------------

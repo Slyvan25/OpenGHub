@@ -11,6 +11,7 @@ pub mod ghub_settings;
 pub mod keymap;
 pub mod lightsync;
 pub mod remap;
+pub mod scripting;
 pub mod hidpp;
 pub mod profiles;
 pub mod state;
@@ -44,8 +45,10 @@ pub fn run() {
         .manage(games::Library::default())
         .manage(std::sync::Arc::new(remap::Injector::new()))
         .manage(std::sync::Arc::new(lightsync::LightSync::new()))
+        .manage(std::sync::Arc::new(scripting::Scripting::new()))
         .setup(|app| {
             let handle = app.handle().clone();
+            app.manage(ScriptHost(spawn_script_host(handle.clone())));
 
             // Initial scan so the dashboard has data before the first IPC call.
             let manager = app.state::<DeviceManager>();
@@ -89,6 +92,10 @@ pub fn run() {
             commands::import_community_profile,
             commands::export_profile,
             commands::apply_assignments,
+            commands::set_profile_script,
+            commands::get_script_log,
+            commands::clear_script_log,
+            commands::get_script_status,
             commands::import_ghub_settings,
             commands::get_device_settings,
             commands::set_device_settings,
@@ -107,6 +114,7 @@ pub fn run() {
             commands::add_manual_game,
             commands::remove_manual_game,
             commands::write_text_file,
+            commands::read_text_file,
             commands::backup_onboard_memory,
             commands::get_onboard_profiles,
             commands::apply_onboard_macros,
@@ -138,6 +146,7 @@ pub fn run() {
         .expect("error while building OpenGHub")
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
+                app.state::<std::sync::Arc<scripting::Scripting>>().stop();
                 app.state::<std::sync::Arc<lightsync::LightSync>>().stop_all();
                 app.state::<DeviceManager>().release_devices();
                 app.state::<std::sync::Arc<remap::Injector>>().release_all();
@@ -167,6 +176,7 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
             "quit" => {
                 // Give the devices back before going: identity remapping,
                 // spy off, onboard mode, released keys.
+                app.state::<std::sync::Arc<scripting::Scripting>>().stop();
                 app.state::<DeviceManager>().release_devices();
                 app.state::<std::sync::Arc<remap::Injector>>().release_all();
                 app.exit(0)
@@ -342,6 +352,7 @@ pub fn apply_assignment_profiles(app: &tauri::AppHandle) {
     let store = app.state::<Store>();
     let cfg = store.get();
     let active = cfg.profiles.iter().find(|p| p.id == cfg.active_profile);
+    let script_active = active.and_then(|p| p.script.as_deref()).map(|s| !s.trim().is_empty()).unwrap_or(false);
     for snap in manager.snapshots() {
         if snap.demo || !snap.online {
             continue;
@@ -362,7 +373,7 @@ pub fn apply_assignment_profiles(app: &tauri::AppHandle) {
             }
         }
         let macros = dp.map(|d| d.macros.clone()).unwrap_or_default();
-        match manager.apply_assignments(&snap.id, &assignments, &macros) {
+        match manager.apply_assignments(&snap.id, &assignments, &macros, script_active) {
             Ok(r) if r.software || r.onboard => log::info!(
                 "{}: {} assignment(s) applied (software: {}, onboard: {})",
                 snap.name,
@@ -384,8 +395,15 @@ fn spawn_button_pump(app: tauri::AppHandle) {
         .spawn(move || loop {
             std::thread::sleep(Duration::from_millis(4));
             let events = app.state::<DeviceManager>().pump_button_events();
+            if events.is_empty() {
+                continue;
+            }
+            let scripting = app.state::<std::sync::Arc<scripting::Scripting>>();
             for ev in events {
-                perform(&app, ev);
+                scripting.mouse_button(ev.button, ev.pressed);
+                if ev.action.is_some() {
+                    perform(&app, ev);
+                }
             }
         })
         .expect("button pump thread");
@@ -395,7 +413,8 @@ fn spawn_button_pump(app: tauri::AppHandle) {
 fn perform(app: &tauri::AppHandle, ev: state::ButtonEvent) {
     use remap::Action;
     let injector = app.state::<std::sync::Arc<remap::Injector>>().inner().clone();
-    let result: std::io::Result<()> = match &ev.action {
+    let Some(action) = ev.action.as_ref() else { return };
+    let result: std::io::Result<()> = match action {
         Action::Keys(codes) => injector.chord(codes, ev.pressed),
         Action::MouseButton(n) => injector.mouse_button(*n, ev.pressed),
         Action::Macro(steps) => {
@@ -411,7 +430,7 @@ fn perform(app: &tauri::AppHandle, ev: state::ButtonEvent) {
             Ok(())
         }
         Action::DpiUp | Action::DpiDown | Action::DpiCycle | Action::DpiDefault | Action::DpiShift => {
-            dpi_action(app, &ev.device_id, &ev.action, ev.pressed);
+            dpi_action(app, &ev.device_id, action, ev.pressed);
             Ok(())
         }
         Action::ProfileNext => {
@@ -515,6 +534,121 @@ pub fn apply_all_profiles(app: &tauri::AppHandle) {
     for id in app.state::<Store>().get().settings.onboard_mode_devices.clone() {
         write_profile_to_device(app, &id);
     }
+    apply_profile_script(app);
+}
+
+/// The channel scripts use to reach the device layer.
+pub struct ScriptHost(pub std::sync::mpsc::Sender<scripting::HostRequest>);
+
+/// Runs the active profile's Lua script; stops the previous one when the
+/// profile changed or has no script. Restarting the same profile's script is
+/// left to `set_profile_script`, so a rescan does not re-run it.
+pub fn apply_profile_script(app: &tauri::AppHandle) {
+    let cfg = app.state::<Store>().get();
+    let scripting = app.state::<std::sync::Arc<scripting::Scripting>>();
+    let active = cfg.profiles.iter().find(|p| p.id == cfg.active_profile);
+    let source = active.and_then(|p| p.script.as_deref()).filter(|s| !s.trim().is_empty());
+    match (source, scripting.active_profile()) {
+        (Some(_), Some(running)) if running == cfg.active_profile => {}
+        (Some(src), _) => start_script(app, &cfg.active_profile, src),
+        (None, Some(_)) => scripting.stop(),
+        (None, None) => {}
+    }
+}
+
+pub fn start_script(app: &tauri::AppHandle, profile_id: &str, source: &str) {
+    let scripting = app.state::<std::sync::Arc<scripting::Scripting>>();
+    let injector = app.state::<std::sync::Arc<remap::Injector>>().inner().clone();
+    let host = app.state::<ScriptHost>().0.clone();
+    scripting.start(profile_id, source, injector, host);
+}
+
+/// Serves what a script asks of the devices: DPI, backlight, macros. One
+/// thread, so a chatty script cannot stall the pump or the UI.
+fn spawn_script_host(app: tauri::AppHandle) -> std::sync::mpsc::Sender<scripting::HostRequest> {
+    use scripting::HostRequest;
+    let (tx, rx) = std::sync::mpsc::channel::<HostRequest>();
+    std::thread::Builder::new()
+        .name("script-host".into())
+        .spawn(move || {
+            for req in rx {
+                match req {
+                    HostRequest::SetDpiIndex(i) => script_set_dpi(&app, None, i),
+                    HostRequest::SetDpiTable(table, i) => script_set_dpi(&app, Some(table), i),
+                    HostRequest::SetBacklight(rgb) => {
+                        let manager = app.state::<DeviceManager>();
+                        for snap in manager.snapshots() {
+                            if snap.demo || !snap.online || !snap.capabilities.lighting {
+                                continue;
+                            }
+                            let zones = manager.lighting_zones(&snap.id).unwrap_or_default();
+                            for z in zones {
+                                let _ = manager.set_lighting(&snap.id, z.index, rgb, hidpp::features::LightEffect::Fixed, false);
+                            }
+                        }
+                    }
+                    HostRequest::PlayMacro(name) => {
+                        let cfg = app.state::<Store>().get();
+                        let steps = cfg
+                            .profiles
+                            .iter()
+                            .find(|p| p.id == cfg.active_profile)
+                            .and_then(|p| p.devices.values().flat_map(|d| d.macros.iter()).find(|m| m.name.eq_ignore_ascii_case(&name)))
+                            .map(|m| m.steps.clone());
+                        match steps {
+                            Some(steps) => app.state::<std::sync::Arc<remap::Injector>>().inner().play_macro(steps),
+                            None => log::warn!("script: no macro named {name:?} in the active profile"),
+                        }
+                    }
+                }
+            }
+        })
+        .expect("script host thread");
+    tx
+}
+
+/// `SetMouseDPITableIndex` / `SetMouseDPITable` for every mouse in the
+/// active profile; the Sensitivity page follows through the config event.
+fn script_set_dpi(app: &tauri::AppHandle, table: Option<Vec<u16>>, index: usize) {
+    let store = app.state::<Store>();
+    let manager = app.state::<DeviceManager>();
+    let cfg = store.get();
+    let pid = cfg.active_profile.clone();
+    let mut changed = false;
+    for snap in manager.snapshots() {
+        if snap.demo || !snap.online || !snap.capabilities.dpi {
+            continue;
+        }
+        let mut dp = cfg.profiles.iter().find(|p| p.id == pid).and_then(|p| p.devices.get(&snap.id)).cloned().unwrap_or_default();
+        if let Some(t) = &table {
+            dp.dpi_stages = t.clone();
+        }
+        if dp.dpi_stages.is_empty() {
+            continue;
+        }
+        let stage = index.min(dp.dpi_stages.len() - 1);
+        match manager.set_dpi(&snap.id, dp.dpi_stages[stage]) {
+            Ok(_) => {
+                let id = snap.id.clone();
+                let stages = dp.dpi_stages.clone();
+                let _ = store.update(|c| {
+                    if let Some(p) = c.profiles.iter_mut().find(|p| p.id == pid) {
+                        let d = p.devices.entry(id).or_default();
+                        d.dpi_stages = stages;
+                        d.active_stage = stage;
+                    }
+                });
+                changed = true;
+                if let Some(s) = manager.snapshot(&snap.id) {
+                    let _ = app.emit(commands::EVENT_DEVICE_UPDATED, s);
+                }
+            }
+            Err(e) => log::warn!("script: dpi not set on {}: {e}", snap.name),
+        }
+    }
+    if changed {
+        let _ = app.emit(commands::EVENT_CONFIG_CHANGED, store.get());
+    }
 }
 
 /// Puts the devices the user chose into on-board memory mode after a rescan,
@@ -532,6 +666,13 @@ pub fn apply_onboard_modes(app: &tauri::AppHandle) {
             match manager.set_onboard_mode(&snap.id, true) {
                 Ok(_) => write_profile_to_device(app, &snap.id),
                 Err(e) => log::warn!("{}: onboard mode not set: {e}", snap.name),
+            }
+        } else if !want && snap.onboard_mode == Some(true) {
+            // Not chosen here (or chosen in G HUB on another OS): host mode
+            // while we run, so assignments and scripts see the buttons. Quit
+            // hands the device back to its onboard profile.
+            if let Err(e) = manager.set_onboard_mode(&snap.id, false) {
+                log::warn!("{}: host mode not set: {e}", snap.name);
             }
         }
     }

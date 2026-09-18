@@ -357,6 +357,7 @@ mod tests {
             poster_url: None,
             disabled: false,
             devices: Default::default(),
+            script: None,
         };
         profile.devices.insert(
             "046d:407f:255".into(),

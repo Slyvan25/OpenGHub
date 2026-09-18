@@ -30,6 +30,7 @@ kernel module, no proprietary daemon.
 | Button remapping (non-macro) | ⚠️ UI and profile storage only; not written to the device yet |
 | On-board memory mode (`0x8100`) | ✅ toggle per device; DPI ladder, report rate, lighting and button table written into the onboard profile |
 | Import from G HUB `settings.db` | ✅ profiles, DPI/shift, report rate, per-zone lighting, button assignments |
+| Lua scripting (G HUB API: `OnEvent`, `PressKey`, `OutputLogMessage`, …) | ✅ per profile, Lua 5.4 in-process; scripts written for G HUB load unchanged |
 
 ## Requirements
 
@@ -295,6 +296,32 @@ actions follow the layer too; each press remembers the layer it was resolved in 
 never sticks a key. In onboard mode the layer is written to the profile's second button table
 at offset 96 (unassigned = `ff`, as the factory table has it), with the shift button itself as
 special `0x0b`.
+
+### Lua scripting
+
+*Profiles → ⋮ → Scripting…* opens the same editor-over-console window G HUB has. A profile's
+script runs on its own thread in a Lua 5.4 VM (`mlua`, vendored — nothing to install) for as
+long as the profile is active; *Save & Run* (Ctrl+S) restarts it, *Stop* removes it, and
+switching profile stops one script and starts the next. The API is G HUB's, so existing
+scripts work as they are:
+
+- `OnEvent(event, arg, family)` receives `PROFILE_ACTIVATED`, `MOUSE_BUTTON_PRESSED` /
+  `MOUSE_BUTTON_RELEASED` (arg = button number, 1-based; button 1 only after
+  `EnablePrimaryMouseButtonEvents(true)`) and `PROFILE_DEACTIVATED`.
+- Input: `PressKey`, `ReleaseKey`, `PressAndReleaseKey` (names as in G HUB — `lctrl`, `f5`,
+  `spacebar`, `num7`, or a scancode), `PressMouseButton` … `PressAndReleaseMouseButton`,
+  `MoveMouseRelative`, `MoveMouseWheel`, `IsMouseButtonPressed`, `IsModifierPressed`. All of
+  it goes through the same virtual keyboard the assignments use, so it works on Wayland.
+  `MoveMouseTo` has no Wayland equivalent and logs instead.
+- Device: `SetMouseDPITableIndex`, `SetMouseDPITable`, `SetBacklightColor`, `PlayMacro`
+  (a macro of the active profile, by name).
+- Console: `OutputLogMessage` (printf subset), `OutputDebugMessage`, `ClearLog`, `Sleep`,
+  `GetRunningTime`, `GetDate`. `SetMKeyState` / `GetMKeyState` / `IsKeyLockOn` are accepted
+  and do nothing.
+
+Button events come from the `0x8110` button spy, which is switched on for every mouse while a
+script runs even when nothing is assigned. A device in on-board memory mode keeps its buttons
+to itself, so the console says so instead of silently seeing nothing.
 
 ### On-board memory mode
 

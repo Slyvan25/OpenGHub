@@ -301,6 +301,15 @@ export interface Profile {
   /** A disabled game never activates its profile. */
   disabled?: boolean;
   devices: Record<string, DeviceProfile>;
+  /** Lua script run while this profile is active (G HUB scripting API). */
+  script?: string | null;
+}
+
+export interface ScriptStatus {
+  running: boolean;
+  profileId: string | null;
+  /** Devices in on-board memory mode; their buttons do not reach scripts. */
+  onboardDevices: string[];
 }
 
 export interface Settings {

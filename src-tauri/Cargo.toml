@@ -39,6 +39,7 @@ ureq = { version = "2", default-features = false, features = ["tls", "json", "gz
 libc = "0.2.189"
 ashpd = { version = "0.12.3", features = ["tokio"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
+mlua = { version = "0.9.9", features = ["lua54", "vendored", "send"] }
 
 # The `probe` example links against the lib and needs hidapi directly.
 [dev-dependencies]

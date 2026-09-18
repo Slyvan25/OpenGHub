@@ -29,6 +29,8 @@ pub const ABS_HAT0X: u16 = 0x10;
 pub const ABS_HAT0Y: u16 = 0x11;
 
 pub const EV_REL: u16 = 0x02;
+pub const REL_X: u16 = 0x00;
+pub const REL_Y: u16 = 0x01;
 pub const REL_WHEEL: u16 = 0x08;
 pub const REL_HWHEEL: u16 = 0x06;
 
@@ -207,6 +209,8 @@ impl VirtualDevice {
             for code in 1..=KEY_MAX {
                 let _ = ioctl_int(fd, UI_SET_KEYBIT, code as _);
             }
+            ioctl_int(fd, UI_SET_RELBIT, REL_X as _)?;
+            ioctl_int(fd, UI_SET_RELBIT, REL_Y as _)?;
             ioctl_int(fd, UI_SET_RELBIT, REL_WHEEL as _)?;
             ioctl_int(fd, UI_SET_RELBIT, REL_HWHEEL as _)?;
 

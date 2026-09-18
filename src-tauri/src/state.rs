@@ -157,13 +157,14 @@ pub struct AssignmentReport {
     pub onboard: bool,
 }
 
-/// A button edge on a device with a software-mode assignment.
+/// A button edge on a device the pump is watching. `action` is `None` for
+/// buttons without an assignment; scripts still hear about those.
 #[derive(Debug, Clone)]
 pub struct ButtonEvent {
     pub device_id: String,
     pub button: u8,
     pub pressed: bool,
-    pub action: Action,
+    pub action: Option<Action>,
 }
 
 /// Why the device list came back empty. The dashboard renders a different
@@ -472,11 +473,14 @@ impl DeviceManager {
     /// Applies a profile's button assignments to a device: the software-mode
     /// plan (spy + remapping, or the wheel's button mask) and, where the
     /// device has onboard profiles, the onboard button table too.
+    /// `watch_all` keeps the spy on even without assignments, so a running
+    /// Lua script sees every button.
     pub fn apply_assignments(
         &self,
         id: &str,
         assignments: &[Assignment],
         macros: &[MacroDef],
+        watch_all: bool,
     ) -> Result<AssignmentReport> {
         let mut inner = self.inner.lock();
         let mut report = AssignmentReport::default();
@@ -503,7 +507,7 @@ impl DeviceManager {
             let count = inner.with_handle(id, features::spy_button_count)?;
             let plan = Plan::build(assignments, macros, count);
             let table = plan.remapping;
-            let needs_spy = plan.needs_spy();
+            let needs_spy = plan.needs_spy() || watch_all;
             inner.with_handle(id, |h| {
                 features::write_remapping(h, &table)?;
                 features::set_spy(h, needs_spy)?;
@@ -637,8 +641,8 @@ impl DeviceManager {
                     for ev in events {
                         if let Some(mask) = features::spy_event_mask(&ev, spy) {
                             for (button, pressed) in plan.transitions(mask) {
-                                let Some(action) = plan.resolve(button, pressed) else { continue };
-                                if action == Action::GShift {
+                                let action = plan.resolve(button, pressed);
+                                if action == Some(Action::GShift) {
                                     plan.shift_held = pressed;
                                     swap = Some(if pressed { plan.shift_remapping } else { plan.remapping });
                                     continue;
@@ -662,8 +666,8 @@ impl DeviceManager {
             if let Some(mask) = mask {
                 let plan = inner.plans.get_mut(&id).expect("plan");
                 for (button, pressed) in plan.transitions(mask) {
-                    let Some(action) = plan.resolve(button, pressed) else { continue };
-                    if action == Action::GShift {
+                    let action = plan.resolve(button, pressed);
+                    if action == Some(Action::GShift) {
                         plan.shift_held = pressed;
                         continue;
                     }

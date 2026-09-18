@@ -166,6 +166,9 @@ function loadConfig(): Config {
 
 let config = loadConfig();
 
+const scriptLog: string[] = [];
+const stamp = () => new Date().toTimeString().slice(0, 8);
+
 const mockDeviceSettings = {
   autoSleepMin: 0,
   inactivityLightingMin: 0,
@@ -368,6 +371,32 @@ export async function mockInvoke<T>(command: string, args: Record<string, unknow
       return persist() as T;
     }
 
+    case "set_profile_script": {
+      const p = config.profiles.find((x) => x.id === args.profileId);
+      if (p) p.script = (args.script as string | null) ?? null;
+      if (p && config.activeProfile === p.id) {
+        scriptLog.length = 0;
+        if (p.script) {
+          scriptLog.push(`[${stamp()}] script started`, "PROFILE_ACTIVATED 0");
+        }
+      }
+      return persist() as T;
+    }
+    case "get_script_log":
+      return [...scriptLog] as T;
+    case "clear_script_log":
+      scriptLog.length = 0;
+      return undefined as T;
+    case "get_script_status": {
+      const p = config.profiles.find((x) => x.id === config.activeProfile);
+      const running = !!p?.script;
+      return {
+        running,
+        profileId: running ? p!.id : null,
+        onboardDevices: devices.filter((d) => d.onboardMode).map((d) => d.name),
+      } as T;
+    }
+
     case "get_device_settings":
       return { ...mockDeviceSettings } as T;
     case "set_device_settings":
@@ -511,6 +540,8 @@ export async function mockInvoke<T>(command: string, args: Record<string, unknow
 
     case "write_text_file":
       return undefined as T;
+    case "read_text_file":
+      return "" as T;
 
     case "set_profile_disabled": {
       const p = config.profiles.find((x) => x.id === args.profileId);
