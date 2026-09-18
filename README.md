@@ -188,10 +188,24 @@ rule in `packaging/` (Steam's rule grants it too).
 TrueForce is different: it is an audio/physics stream that the game's Logitech SDK writes
 straight to the wheel's third HID interface (usage page `0xFFFD`), not through G HUB. Proton
 passes that hidraw interface through, so TrueForce works on Linux — confirmed in Assetto
-Corsa — and OpenGHub's driver leaves that interface alone. What G HUB's Torque / Audio Effects
-sliders do on Windows is scale the stream via HID++ `0x8139`, which the PS-mode G923 does not
-expose; here *Torque* is wired to the driver's force-feedback gain and *Audio Effects* is kept
-per profile, while the game's own TrueForce settings set the stream's strength.
+Corsa — and OpenGHub's driver leaves that interface alone. G HUB's *Torque* / *Audio Effects*
+sliders are not wheel settings either: G HUB hands them to Logitech's `trueforce_manager`
+service over a named pipe, and that service scales the stream in software (`GAIN_TF_IN_SW` /
+`GAIN_KF_IN_SW` in the binary) before it reaches the wheel. Without that service the game's own
+TrueForce gain is the only one applied, so here *Torque* is wired to the driver's force-feedback
+gain and *Audio Effects* is only stored with the profile. Making it real would mean proxying
+the `0xFFFD` stream and scaling it, which needs the (undocumented) packet format first.
+
+**What the PS-mode wheel's HID++ interface offers.** Interface 1 is a HID++ 4.2 endpoint
+(short/long reports `0x10`/`0x11`, device index `0xFF`). Its feature set has the mouse-style
+basics plus `0x8120` gaming attachments (reports pedals and shifter as connected), `0x8127`
+dual clutch, `0x807a` RPM indicator, `0x80a3` axis response curve (four axes X/Y/Z/Rz, each
+`getSensitivity` → `(100, 50)`, `setSensitivity(axis, a, b)` with both ≤ 100) and `0x80d0`
+combined pedals — but not the Xbox/PC edition's `0x8123`/`0x8131`/`0x8136`/`0x8138`/`0x8139`.
+Tested on hardware: the wheel stores the response-curve and combined-pedals values but the
+PS-mode input report is unchanged by them (full travel still reads 100 %, a held pedal reads
+the same under every setting), so they are consumed by Logitech's Windows driver rather than
+by the firmware. OpenGHub therefore keeps pedal curves on its virtual wheel.
 
 Two hardware gotchas that cost an evening: the wheel must be on **mains power** (unpowered it
 enumerates but resets constantly), and on one of the AMD xHCI controllers here the joystick

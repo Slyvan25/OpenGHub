@@ -735,7 +735,8 @@ pub fn apply_lighting_profiles(app: &tauri::AppHandle) {
     let active = cfg.profiles.iter().find(|p| p.id == cfg.active_profile);
     let mut table = std::collections::HashMap::new();
     for snap in manager.snapshots() {
-        if snap.demo || !snap.capabilities.lighting {
+        // Wheels have no colour zones but their RPM LEDs take software effects.
+        if snap.demo || !(snap.capabilities.lighting || snap.capabilities.wheel) {
             continue;
         }
         let Some(dp) = active.and_then(|p| p.devices.get(&snap.id)) else { continue };

@@ -400,6 +400,8 @@ pub struct LightSync {
     sent: Mutex<HashMap<ZoneKey, ([u8; 3], Instant)>>,
     pub restore_token: Mutex<Option<String>>,
     pub last_error: Mutex<Option<String>>,
+    /// Last RPM-LED mask sent per wheel.
+    wheel_masks: Mutex<HashMap<String, u8>>,
 }
 
 impl Default for LightSync {
@@ -417,6 +419,7 @@ impl LightSync {
             sent: Mutex::new(HashMap::new()),
             restore_token: Mutex::new(None),
             last_error: Mutex::new(None),
+            wheel_masks: Mutex::new(HashMap::new()),
         }
     }
 
@@ -424,6 +427,7 @@ impl LightSync {
     pub fn set_effects(&self, effects: HashMap<ZoneKey, SoftwareEffect>) {
         *self.effects.lock() = effects;
         self.sent.lock().clear();
+        self.wheel_masks.lock().clear();
     }
 
     pub fn set_zone(&self, key: ZoneKey, effect: Option<SoftwareEffect>) {
@@ -437,6 +441,7 @@ impl LightSync {
             }
         }
         self.sent.lock().remove(&key);
+        self.wheel_masks.lock().remove(&key.0);
     }
 
     pub fn effects(&self) -> HashMap<ZoneKey, SoftwareEffect> {
@@ -492,8 +497,10 @@ impl LightSync {
         }
     }
 
-    /// One tick: the colours that should go out now, deduplicated.
-    pub fn tick(&self) -> Vec<(ZoneKey, [u8; 3])> {
+    /// One tick: the colours that should go out now, deduplicated, each with
+    /// a 0-1 level (loudness, or the region's brightness) for targets that
+    /// have a bar of LEDs rather than a colour — a wheel's RPM LEDs.
+    pub fn tick(&self) -> Vec<(ZoneKey, [u8; 3], f32)> {
         let effects = self.effects.lock().clone();
         if effects.is_empty() {
             return vec![];
@@ -504,14 +511,15 @@ impl LightSync {
         let mut sent = self.sent.lock();
         let now = Instant::now();
         for (key, fx) in effects {
-            let rgb = match &fx {
+            let (rgb, level) = match &fx {
                 SoftwareEffect::Screen { region, brightness } => {
                     let Some(f) = &frame else { continue };
-                    scale(f.average(region), *brightness)
+                    let avg = f.average(region);
+                    (scale(avg, *brightness), luminance(avg) * (*brightness).min(100) as f32 / 100.0)
                 }
                 SoftwareEffect::Audio { low, mid, high, sensitivity, brightness } => {
                     let Some(l) = levels else { continue };
-                    scale(audio_colour(l, low, mid, high, *sensitivity), *brightness)
+                    (scale(audio_colour(l, low, mid, high, *sensitivity), *brightness), audio_level(l, *sensitivity))
                 }
             };
             let changed = match sent.get(&key) {
@@ -520,10 +528,23 @@ impl LightSync {
             };
             if changed {
                 sent.insert(key.clone(), (rgb, now));
-                out.push((key, rgb));
+                out.push((key, rgb, level));
             }
         }
         out
+    }
+
+    /// Bar mask for a run of `leds` LEDs at `level` (0-1): 1 = all off.
+    /// Remembers the last mask per device so an unchanged bar is not re-sent.
+    pub fn led_mask(&self, device: &str, level: f32, leds: u8) -> Option<u8> {
+        let lit = ((level.clamp(0.0, 1.0) * leds as f32) + 0.25).floor().min(leds as f32) as u8;
+        let mask = if lit == 0 { 0 } else { ((1u16 << lit) - 1) as u8 };
+        let mut last = self.wheel_masks.lock();
+        if last.get(device) == Some(&mask) {
+            return None;
+        }
+        last.insert(device.to_string(), mask);
+        Some(mask)
     }
 
     pub fn active(&self) -> bool {
@@ -541,6 +562,17 @@ impl LightSync {
 fn scale(rgb: [u8; 3], brightness: u8) -> [u8; 3] {
     let b = brightness.min(100) as u32;
     [(rgb[0] as u32 * b / 100) as u8, (rgb[1] as u32 * b / 100) as u8, (rgb[2] as u32 * b / 100) as u8]
+}
+
+/// Perceived brightness of a colour, 0-1.
+fn luminance(rgb: [u8; 3]) -> f32 {
+    (0.2126 * rgb[0] as f32 + 0.7152 * rgb[1] as f32 + 0.0722 * rgb[2] as f32) / 255.0
+}
+
+/// Overall loudness for a VU-style bar, with the same gain law as the colour.
+pub fn audio_level(l: AudioLevels, sensitivity: u8) -> f32 {
+    let gain = 0.4 + sensitivity.min(100) as f32 / 100.0 * 1.6;
+    (l.rms * gain).min(1.0)
 }
 
 fn distance(a: [u8; 3], b: [u8; 3]) -> u16 {
@@ -595,7 +627,18 @@ pub fn spawn(app: tauri::AppHandle) {
             let _ = tauri::async_runtime::spawn_blocking(move || {
                 let manager = app2.state::<crate::state::DeviceManager>();
                 let mut failed: Option<String> = None;
-                for ((device, zone), rgb) in updates {
+                for ((device, zone), rgb, level) in updates {
+                    // A wheel has no colour zones, only its row of RPM LEDs:
+                    // the level lights them up as a bar.
+                    if let Some(leds) = manager.snapshot(&device).and_then(|s| s.wheel).map(|w| w.rpm_leds).filter(|n| *n > 0) {
+                        if let Some(mask) = sync2.led_mask(&device, level, leds) {
+                            if let Err(e) = manager.set_wheel_leds(&device, mask) {
+                                log::debug!("lightsync LEDs on {device} failed: {e}");
+                                failed = Some(format!("Lighting write failed: {e}"));
+                            }
+                        }
+                        continue;
+                    }
                     if let Err(e) = manager.set_lighting(&device, zone, rgb, crate::hidpp::features::LightEffect::Fixed, false) {
                         log::debug!("lightsync write to {device} zone {zone} failed: {e}");
                         // A device in on-board memory mode refuses live colours;
@@ -625,6 +668,16 @@ use tauri::Manager;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn led_bar_follows_the_level_and_dedups() {
+        let sync = LightSync::new();
+        assert_eq!(sync.led_mask("w", 0.0, 5), Some(0));
+        assert_eq!(sync.led_mask("w", 0.0, 5), None);
+        assert_eq!(sync.led_mask("w", 0.5, 5), Some(0b00011));
+        assert_eq!(sync.led_mask("w", 1.0, 5), Some(0b11111));
+        assert_eq!(sync.led_mask("w", 0.3, 5), Some(0b00001));
+    }
 
     #[test]
     fn region_average() {

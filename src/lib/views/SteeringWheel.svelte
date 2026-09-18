@@ -13,12 +13,13 @@
   import * as api from "$lib/api";
   import DeviceArt from "$lib/components/DeviceArt.svelte";
   import DeviceWorkspace from "$lib/components/DeviceWorkspace.svelte";
+  import Segmented from "$lib/components/Segmented.svelte";
   import Slider from "$lib/components/Slider.svelte";
   import { artworkIds } from "$lib/device-ui";
   import { artwork } from "$lib/stores/artwork.svelte";
   import { configStore } from "$lib/stores/config.svelte";
   import { ui } from "$lib/stores/ui.svelte";
-  import type { Device, WheelSettings, WheelState } from "$lib/types";
+  import type { Device, LightingSettings, SoftwareEffect, WheelSettings, WheelState } from "$lib/types";
 
   interface Props {
     device: Device;
@@ -107,6 +108,56 @@
 
   function restoreDefaults() {
     commit({ ...DEFAULTS, rangeDeg: rangeMax, centerOffset: settings.centerOffset, pedals: settings.pedals });
+  }
+
+  // -- RPM LEDs as a LightSync target -----------------------------------------
+  //
+  // The wheel has no colour zones, but its row of RPM LEDs makes a fine VU
+  // meter: the audio visualizer lights them by loudness, the screen sampler
+  // by how bright the sampled region is. Games keep the LEDs when "Games".
+  type LedMode = "games" | "audio" | "screen";
+  const LED_ZONE = "0";
+  const AUDIO_DEFAULT = { kind: "audio" as const, low: "#ff2d2d", mid: "#00b8fc", high: "#ffffff", sensitivity: 60, brightness: 100 };
+  const SCREEN_DEFAULT: SoftwareEffect = { kind: "screen", region: { x: 0, y: 0, w: 1, h: 1 }, brightness: 100 };
+  const ledSettings = $derived<LightingSettings | null>(configStore.deviceProfile(device.id).lightingZones?.[LED_ZONE] ?? null);
+  const ledMode = $derived<LedMode>(
+    ledSettings?.effect === "audio" || ledSettings?.effect === "screen" ? ledSettings.effect : "games",
+  );
+  const ledSensitivity = $derived(ledSettings?.software?.kind === "audio" ? ledSettings.software.sensitivity : 60);
+  let ledStatus = $state<{ error: string | null } | null>(null);
+
+  $effect(() => {
+    if (ledMode === "games") {
+      ledStatus = null;
+      return;
+    }
+    let alive = true;
+    const tick = () => api.getLightSyncStatus().then((s) => alive && (ledStatus = s)).catch(() => {});
+    tick();
+    const timer = setInterval(tick, 1500);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  });
+
+  async function setLedMode(mode: LedMode, sensitivity = ledSensitivity) {
+    const profile = configStore.deviceProfile(device.id);
+    const zones = { ...(profile.lightingZones ?? {}) };
+    let fx: SoftwareEffect | null = null;
+    if (mode === "games") {
+      delete zones[LED_ZONE];
+    } else {
+      fx = mode === "audio" ? { ...AUDIO_DEFAULT, sensitivity } : SCREEN_DEFAULT;
+      zones[LED_ZONE] = { effect: mode, color: "#ffffff", brightness: 100, rateMs: 0, software: fx };
+    }
+    try {
+      await api.setZoneSoftwareEffect(device.id, 0, fx);
+      await configStore.saveDeviceProfile(device.id, { ...profile, lightingZones: zones });
+      if (mode === "games") await api.setWheelLeds(device.id, 0);
+    } catch (e) {
+      ui.toast(api.errorMessage(e), "error", 6000);
+    }
   }
 
   /** Lights the RPM LEDs in a quick chase, so the user knows the channel is live. */
@@ -211,19 +262,56 @@
       value={settings.trueforceAudio}
       min={0}
       max={100}
-      label="Audio effects"
+      label="Audio effects (profile only)"
       oninput={(v) => (settings = { ...settings, trueforceAudio: v })}
       onchange={(v) => commit({ trueforceAudio: v })}
     />
     <p class="hint">
       Torque is the force-feedback strength of OpenGHub's wheel driver. TrueForce itself is
-      streamed by the game straight to the wheel and works under Proton; its gain follows the
-      game's own TrueForce settings, so Audio effects is kept here for your profile. Proton
+      streamed by the game straight to the wheel and works under Proton. On Windows the Audio
+      effects gain is applied by Logitech's TrueForce service, not by the wheel, so here it is
+      only stored with the profile — set the TrueForce gain in the game's own options. Proton
       games need <code>PROTON_DISABLE_HIDRAW=0x046d/0xc266</code> to see this driver's wheel
       next to the raw one — see the README.
     </p>
 
     <button class="wide" onclick={restoreDefaults} disabled={busy}>Restore default settings</button>
+
+    {#if info?.rpmLeds}
+      <div class="leds-block">
+        <span class="block-label">RPM LEDs</span>
+        <Segmented
+          value={ledMode}
+          options={[
+            { value: "games", label: "Games" },
+            { value: "audio", label: "Audio" },
+            { value: "screen", label: "Screen" },
+          ]}
+          onselect={(m) => setLedMode(m as LedMode)}
+        />
+        {#if ledMode === "audio"}
+          <Slider
+            value={ledSensitivity}
+            min={0}
+            max={100}
+            label="Sensitivity"
+            suffix="%"
+            onchange={(v) => setLedMode("audio", v)}
+          />
+        {/if}
+        <p class="hint" class:error={!!ledStatus?.error}>
+          {#if ledStatus?.error}
+            {ledStatus.error}
+          {:else if ledMode === "audio"}
+            The LEDs follow what is playing on the default output, like a VU meter.
+          {:else if ledMode === "screen"}
+            The LEDs follow how bright the screen is; your desktop asks once which screen to share.
+          {:else}
+            Games drive the LEDs as an RPM indicator.
+          {/if}
+        </p>
+      </div>
+    {/if}
   {/snippet}
 
   {#snippet stageAside()}
@@ -377,6 +465,27 @@
     font-size: 11px;
     line-height: 1.45;
     color: var(--text-dimmer);
+  }
+
+  .hint.error {
+    color: var(--warning);
+  }
+
+  .leds-block {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 1px solid var(--line);
+  }
+
+  .block-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-label);
   }
 
   .wide {
