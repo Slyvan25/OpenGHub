@@ -24,6 +24,8 @@ pub const SYN_REPORT: u16 = 0;
 pub const ABS_X: u16 = 0x00;
 pub const ABS_Y: u16 = 0x01;
 pub const ABS_Z: u16 = 0x02;
+pub const ABS_RX: u16 = 0x03;
+pub const ABS_RY: u16 = 0x04;
 pub const ABS_RZ: u16 = 0x05;
 pub const ABS_HAT0X: u16 = 0x10;
 pub const ABS_HAT0Y: u16 = 0x11;
@@ -43,6 +45,18 @@ pub const BTN_FORWARD: u16 = 0x115;
 pub const BTN_BACK: u16 = 0x116;
 pub const BTN_TASK: u16 = 0x117;
 pub const BTN_TRIGGER: u16 = 0x120;
+// Gamepad buttons, as the kernel's xpad names them.
+pub const BTN_SOUTH: u16 = 0x130;
+pub const BTN_EAST: u16 = 0x131;
+pub const BTN_NORTH: u16 = 0x133;
+pub const BTN_WEST: u16 = 0x134;
+pub const BTN_TL: u16 = 0x136;
+pub const BTN_TR: u16 = 0x137;
+pub const BTN_SELECT: u16 = 0x13a;
+pub const BTN_START: u16 = 0x13b;
+pub const BTN_MODE: u16 = 0x13c;
+pub const BTN_THUMBL: u16 = 0x13d;
+pub const BTN_THUMBR: u16 = 0x13e;
 pub const BTN_TRIGGER_HAPPY: u16 = 0x2c0;
 /// Highest key/button code we declare on virtual keyboards.
 pub const KEY_MAX: u16 = 0x2ff;
@@ -154,7 +168,9 @@ impl VirtualDevice {
             ioctl_int(fd, UI_SET_EVBIT, EV_SYN as _)?;
             ioctl_int(fd, UI_SET_EVBIT, EV_KEY as _)?;
             ioctl_int(fd, UI_SET_EVBIT, EV_ABS as _)?;
-            ioctl_int(fd, UI_SET_EVBIT, EV_FF as _)?;
+            if ff_effects_max > 0 {
+                ioctl_int(fd, UI_SET_EVBIT, EV_FF as _)?;
+            }
             for b in buttons {
                 ioctl_int(fd, UI_SET_KEYBIT, *b as _)?;
             }
@@ -168,11 +184,13 @@ impl VirtualDevice {
                 setup.absinfo.flat = a.flat;
                 ioctl_ptr(fd, UI_ABS_SETUP, &mut setup)?;
             }
-            for code in [
-                FF_CONSTANT, FF_SPRING, FF_DAMPER, FF_FRICTION, FF_INERTIA, FF_RAMP, FF_PERIODIC, FF_SQUARE,
-                FF_TRIANGLE, FF_SINE, FF_SAW_UP, FF_SAW_DOWN, FF_GAIN, FF_AUTOCENTER,
-            ] {
-                ioctl_int(fd, UI_SET_FFBIT, code as _)?;
+            if ff_effects_max > 0 {
+                for code in [
+                    FF_CONSTANT, FF_SPRING, FF_DAMPER, FF_FRICTION, FF_INERTIA, FF_RAMP, FF_PERIODIC, FF_SQUARE,
+                    FF_TRIANGLE, FF_SINE, FF_SAW_UP, FF_SAW_DOWN, FF_GAIN, FF_AUTOCENTER,
+                ] {
+                    ioctl_int(fd, UI_SET_FFBIT, code as _)?;
+                }
             }
 
             let mut setup: uinput_setup = std::mem::zeroed();

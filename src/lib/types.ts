@@ -106,6 +106,8 @@ export interface WheelSettings {
   trueforceAudio: number;
   trueforceGameControl: boolean;
   pedals: PedalSettings;
+  /** Also present the wheel as an Xbox 360 controller, for games without wheel support. */
+  gamepadMode?: boolean;
 }
 
 export interface PedalCurve {

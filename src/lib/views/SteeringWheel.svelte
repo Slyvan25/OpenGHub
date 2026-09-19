@@ -42,6 +42,7 @@
       clutch: { sensitivity: 50, deadZoneLow: 0, deadZoneHigh: 0, inverted: false },
       combined: false,
     },
+    gamepadMode: false,
   };
 
   let settings = $state<WheelSettings>({ ...DEFAULTS });
@@ -276,6 +277,24 @@
     </p>
 
     <button class="wide" onclick={restoreDefaults} disabled={busy}>Restore default settings</button>
+
+    <div class="leds-block">
+      <span class="block-label">Games without wheel support</span>
+      <label class="check">
+        <input
+          type="checkbox"
+          checked={settings.gamepadMode ?? false}
+          onchange={(e) => commit({ gamepadMode: e.currentTarget.checked })}
+        />
+        <span>Gamepad mode</span>
+      </label>
+      <p class="hint">
+        Adds a virtual Xbox 360 controller next to the wheel: steering on the left stick, accelerator
+        and brake on the triggers, ✕ ○ □ △ as A B X Y, paddles (or L2 / R2) as the bumpers,
+        Share / Options / PS as Back / Start / Guide, D-pad as D-pad. For games that only take a
+        controller — Rocket League, for instance. Needs the force-feedback driver on.
+      </p>
+    </div>
 
     {#if info?.rpmLeds}
       <div class="leds-block">

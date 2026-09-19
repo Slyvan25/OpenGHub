@@ -234,6 +234,16 @@ what you feel is TrueForce plus OpenGHub's centering spring. Two launch options 
 Keep the game's steer lock equal to OpenGHub's operating range — a game on the hidraw path
 cannot set the wheel's range itself.
 
+**Games without wheel support (Rocket League and friends).** *Gamepad mode* on the Steering
+Wheel page adds a second virtual device next to the wheel: an Xbox 360 controller
+(`045e:028e`, which SDL and Proton map with no setup) with steering on the left stick,
+accelerator and brake on the right and left triggers, ✕ ○ □ △ as A B X Y, the paddles (or
+L2 / R2) as the bumpers, Share / Options / PS as Back / Start / Guide, L3 / R3 as the stick
+clicks and the D-pad as the D-pad. It has no force feedback of its own; the wheel's spring and
+the driver keep running. The community repository carries a *Rocket League: Wheel as
+controller* profile for the G923 that turns this on with a 360° range and a firm spring, bound
+to the game so it activates when Rocket League runs.
+
 G HUB's HID++ wheel features (`0x8123` force feedback, `0x812c` centre calibration, `0x8131`
 spring, `0x8138` range, `0x8139` TrueForce) apply to the G920 / G923 Xbox editions; those are
 recognised but not driven yet. `cargo run --example wheeldrive -- 30` runs the driver

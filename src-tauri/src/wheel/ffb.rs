@@ -612,6 +612,9 @@ fn run(
 
     let mut last_forward = Instant::now();
     let mut spring_state: Option<u8> = None;
+    // Gamepad mode's second virtual device, created and dropped as the
+    // setting flips so the bridge (and the game's force feedback) stay up.
+    let mut pad: Option<VirtualDevice> = None;
 
     while !stop.load(Ordering::SeqCst) {
         let tick_start = Instant::now();
@@ -647,6 +650,20 @@ fn run(
 
         // 2. Forces.
         let cfg = shared.settings.lock().clone();
+        match (cfg.gamepad_mode, pad.is_some()) {
+            (true, false) => match create_gamepad(model) {
+                Ok(v) => {
+                    log::info!("wheel {}: gamepad mode on (virtual Xbox 360 controller)", model.name);
+                    pad = Some(v);
+                }
+                Err(e) => log::warn!("gamepad mode: {e}"),
+            },
+            (false, true) => {
+                log::info!("wheel {}: gamepad mode off", model.name);
+                pad = None;
+            }
+            _ => {}
+        }
         let master = cfg.ffb_gain.min(100) as i64 * 0xffff / 100;
         for cmd in engine.tick(master) {
             send(cmd);
@@ -693,6 +710,9 @@ fn run(
                 let s = super::apply_settings(raw, &cfg_now);
                 *state.lock() = s;
                 forward(&vdev, &s, cfg_now.pedals.combined);
+                if let Some(p) = &pad {
+                    forward_gamepad(p, &s);
+                }
                 last_forward = Instant::now();
             } else if last_forward.elapsed() > Duration::from_millis(1000 / INPUT_POLL_HZ) {
                 // Keep the virtual device "alive" for readers that time out.
@@ -730,6 +750,90 @@ fn spring_commands(percent: u8) -> Vec<[u8; 7]> {
     ]
 }
 
+/// The Xbox 360 controller identity SDL and Proton map without any setup.
+const XBOX360_VID: u16 = 0x045e;
+const XBOX360_PID: u16 = 0x028e;
+
+/// Gamepad mode's device: left stick X = steering, triggers = pedals,
+/// face buttons in Xbox positions, no force feedback.
+fn create_gamepad(model: &'static WheelModel) -> Result<VirtualDevice> {
+    let stick = |code| ui::Axis { code, min: -32768, max: 32767, fuzz: 16, flat: 128 };
+    let trigger = |code| ui::Axis { code, min: 0, max: 255, fuzz: 0, flat: 0 };
+    let axes = [
+        stick(ui::ABS_X),
+        stick(ui::ABS_Y),
+        stick(ui::ABS_RX),
+        stick(ui::ABS_RY),
+        trigger(ui::ABS_Z),
+        trigger(ui::ABS_RZ),
+        ui::Axis { code: ui::ABS_HAT0X, min: -1, max: 1, fuzz: 0, flat: 0 },
+        ui::Axis { code: ui::ABS_HAT0Y, min: -1, max: 1, fuzz: 0, flat: 0 },
+    ];
+    let buttons = [
+        ui::BTN_SOUTH,
+        ui::BTN_EAST,
+        ui::BTN_NORTH,
+        ui::BTN_WEST,
+        ui::BTN_TL,
+        ui::BTN_TR,
+        ui::BTN_SELECT,
+        ui::BTN_START,
+        ui::BTN_MODE,
+        ui::BTN_THUMBL,
+        ui::BTN_THUMBR,
+    ];
+    VirtualDevice::create(&format!("OpenGHub {} (gamepad)", model.name), XBOX360_VID, XBOX360_PID, &axes, &buttons, 0)
+        .map_err(|e| Error::other(format!("cannot create the virtual gamepad on /dev/uinput: {e}")))
+}
+
+/// Gamepad mode: steering → left stick X, accelerator → right trigger,
+/// brake → left trigger, ✕ ○ □ △ → A B X Y, paddles and L2/R2 → bumpers,
+/// Share/Options/PS → Back/Start/Guide, L3/R3 → stick clicks, D-pad → D-pad.
+fn forward_gamepad(pad: &VirtualDevice, s: &WheelState) {
+    let stick = (s.steering.clamp(-1.0, 1.0) * 32767.0) as i32;
+    let trigger = |v: f32| (v.clamp(0.0, 1.0) * 255.0) as i32;
+    let (hx, hy) = hat_xy(s.hat);
+    let b = |bit: u32| ((s.buttons >> bit) & 1) as i32;
+    let events = [
+        (ui::EV_ABS, ui::ABS_X, stick),
+        (ui::EV_ABS, ui::ABS_Y, 0),
+        (ui::EV_ABS, ui::ABS_RX, 0),
+        (ui::EV_ABS, ui::ABS_RY, 0),
+        (ui::EV_ABS, ui::ABS_Z, trigger(s.brake)),
+        (ui::EV_ABS, ui::ABS_RZ, trigger(s.accelerator)),
+        (ui::EV_ABS, ui::ABS_HAT0X, hx),
+        (ui::EV_ABS, ui::ABS_HAT0Y, hy),
+        (ui::EV_KEY, ui::BTN_SOUTH, b(1)),       // ✕
+        (ui::EV_KEY, ui::BTN_EAST, b(2)),        // ○
+        (ui::EV_KEY, ui::BTN_WEST, b(0)),        // □
+        (ui::EV_KEY, ui::BTN_NORTH, b(3)),       // △
+        (ui::EV_KEY, ui::BTN_TL, b(4) | b(6)),   // left paddle or L2
+        (ui::EV_KEY, ui::BTN_TR, b(5) | b(7)),   // right paddle or R2
+        (ui::EV_KEY, ui::BTN_SELECT, b(8)),      // Share
+        (ui::EV_KEY, ui::BTN_START, b(9)),       // Options
+        (ui::EV_KEY, ui::BTN_THUMBL, b(10)),     // L3
+        (ui::EV_KEY, ui::BTN_THUMBR, b(11)),     // R3
+        (ui::EV_KEY, ui::BTN_MODE, b(12)),       // PS
+    ];
+    if let Err(e) = pad.emit(&events) {
+        log::debug!("gamepad emit failed: {e}");
+    }
+}
+
+fn hat_xy(hat: u8) -> (i32, i32) {
+    match hat {
+        0 => (0, -1),
+        1 => (1, -1),
+        2 => (1, 0),
+        3 => (1, 1),
+        4 => (0, 1),
+        5 => (-1, 1),
+        6 => (-1, 0),
+        7 => (-1, -1),
+        _ => (0, 0),
+    }
+}
+
 /// Mirrors a state onto the virtual device. Pedals keep Logitech's raw sense
 /// (max = released), as the kernel driver reports them.
 fn forward(vdev: &VirtualDevice, s: &WheelState, combined: bool) {
@@ -743,17 +847,7 @@ fn forward(vdev: &VirtualDevice, s: &WheelState, combined: bool) {
     } else {
         (s.accelerator, s.brake)
     };
-    let (hx, hy) = match s.hat {
-        0 => (0, -1),
-        1 => (1, -1),
-        2 => (1, 0),
-        3 => (1, 1),
-        4 => (0, 1),
-        5 => (-1, 1),
-        6 => (-1, 0),
-        7 => (-1, -1),
-        _ => (0, 0),
-    };
+    let (hx, hy) = hat_xy(s.hat);
     let mut events = vec![
         (ui::EV_ABS, ui::ABS_X, steering),
         (ui::EV_ABS, ui::ABS_Z, pedal(accel)),

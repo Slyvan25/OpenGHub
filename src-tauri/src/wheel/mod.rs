@@ -276,6 +276,11 @@ pub struct WheelSettings {
     /// Per-pedal response, applied to the virtual axes (G HUB's Pedals panel).
     #[serde(default)]
     pub pedals: PedalSettings,
+    /// Also present the wheel as an Xbox 360 controller — steering on the
+    /// left stick, pedals on the triggers — for games with no wheel support
+    /// (Rocket League and the like).
+    #[serde(default)]
+    pub gamepad_mode: bool,
 }
 
 /// One pedal's response curve and dead zones.
@@ -359,6 +364,7 @@ impl Default for WheelSettings {
             trueforce_audio: 100,
             trueforce_game_control: true,
             pedals: PedalSettings::default(),
+            gamepad_mode: false,
         }
     }
 }

@@ -168,6 +168,18 @@
               {#if dp.macros.length}<div><dt>Macros</dt><dd>{dp.macros.length}</dd></div>{/if}
             </div>
           </div>
+          {#if dp.wheel}
+            <div class="stat">
+              <span class="stat-icon"><Icon name="wheel" size={18} strokeWidth={1.7} /></span>
+              <div>
+                <div><dt>Operating range</dt><dd>{dp.wheel.rangeDeg}°</dd></div>
+                <div><dt>Centering spring</dt><dd>{dp.wheel.centerSpring}%</dd></div>
+                <div><dt>Sensitivity</dt><dd>{dp.wheel.sensitivity}</dd></div>
+                {#if dp.wheel.gamepadMode}<div><dt>Gamepad mode</dt><dd>on — appears as an Xbox controller</dd></div>{/if}
+                {#if dp.wheel.pedals?.combined}<div><dt>Pedals</dt><dd>combined</dd></div>{/if}
+              </div>
+            </div>
+          {/if}
           {#if dp.dpiStages.length}
             <div class="stat">
               <span class="stat-icon"><Icon name="dpi" size={18} strokeWidth={1.7} /></span>

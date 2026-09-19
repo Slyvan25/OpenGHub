@@ -1154,9 +1154,16 @@ pub async fn preview_community_profile(
 pub async fn import_community_profile(
     store: State<'_, Store>,
     manager: State<'_, DeviceManager>,
+    db: State<'_, std::sync::Arc<crate::apps::AppDatabase>>,
     shared: SharedProfile,
 ) -> Result<Config> {
     community::validate(&shared)?;
+    // The game's poster from the application database, as binding does.
+    let poster_url = shared
+        .application
+        .as_ref()
+        .and_then(|a| db.applications().into_iter().find(|x| x.id == a.id))
+        .and_then(|a| a.poster_url.clone());
 
     // Which local devices this profile targets.
     let targets: Vec<String> = manager
@@ -1190,7 +1197,7 @@ pub async fn import_community_profile(
             name: shared.name.clone(),
             kind: if shared.application.is_some() { "game".into() } else { "app".into() },
             application_id: shared.application.as_ref().map(|a| a.id.clone()),
-            poster_url: None,
+            poster_url: poster_url.clone(),
             disabled: false,
             devices,
             script: None,
