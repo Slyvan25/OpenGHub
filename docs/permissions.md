@@ -58,3 +58,11 @@ fd forwarded and `parec` for LIGHTSYNC, `steam` / `lutris` / `xdg-open` for the 
 `loginctl` for "lock computer". "Launch at startup" writes `Exec=flatpak run com.openghub.app`
 and the launchers' folders are mounted read-only for the Games tab. Everything else — HID++,
 the force-feedback driver, the virtual keyboard — runs inside the sandbox as it does natively.
+
+## AppImage
+
+The AppImage bundles WebKitGTK. That WebKit cannot start its bubblewrap sandbox from inside the
+squashfs mount (`WebKitWebProcess has encountered a fatal error`, black window), and its DMA-BUF
+renderer misbehaves with some host Mesa builds, so the app sets `WEBKIT_FORCE_SANDBOX=0` and
+`WEBKIT_DISABLE_DMABUF_RENDERER=1` for itself when started from an AppImage. Set either in the
+environment to override.

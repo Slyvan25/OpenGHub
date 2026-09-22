@@ -39,6 +39,7 @@ const MIN_POLL_SECONDS: u64 = 15;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    appimage_webkit_workarounds();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -171,6 +172,22 @@ pub fn run() {
                 app.state::<std::sync::Arc<remap::Injector>>().release_all();
             }
         });
+}
+
+/// The AppImage carries its own WebKitGTK, and that WebKit cannot start its
+/// bubblewrap sandbox from inside the squashfs mount: WebKitWebProcess dies
+/// and the window stays black. Its DMA-BUF renderer also trips over host
+/// Mesa on some machines. Both are turned off for AppImage runs, before the
+/// webview exists; an explicit environment setting wins.
+fn appimage_webkit_workarounds() {
+    if std::env::var_os("APPIMAGE").is_none() {
+        return;
+    }
+    for (name, value) in [("WEBKIT_FORCE_SANDBOX", "0"), ("WEBKIT_DISABLE_DMABUF_RENDERER", "1")] {
+        if std::env::var_os(name).is_none() {
+            std::env::set_var(name, value);
+        }
+    }
 }
 
 /// Emitted with a route when a tray menu entry is chosen; the layout navigates.
