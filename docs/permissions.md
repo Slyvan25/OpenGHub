@@ -61,8 +61,18 @@ the force-feedback driver, the virtual keyboard — runs inside the sandbox as i
 
 ## AppImage
 
-The AppImage bundles WebKitGTK. That WebKit cannot start its bubblewrap sandbox from inside the
-squashfs mount (`WebKitWebProcess has encountered a fatal error`, black window), and its DMA-BUF
-renderer misbehaves with some host Mesa builds, so the app sets `WEBKIT_FORCE_SANDBOX=0` and
-`WEBKIT_DISABLE_DMABUF_RENDERER=1` for itself when started from an AppImage. Set either in the
-environment to override.
+The AppImage bundles WebKitGTK and the libraries it was built against. Two of those clash with a
+modern host:
+
+- **`libwayland-*`** — mixed with the host's much newer Mesa, EGL display creation fails
+  (`Could not create default EGL display: EGL_BAD_PARAMETER. Aborting...`) and the window stays
+  black, which is what Fedora 44 with WebKitGTK 2.52 does. The release workflow therefore
+  unpacks the AppImage Tauri produced, deletes `usr/lib/libwayland-*.so.*` so the host's are
+  used, and repacks it. Confirmed on hardware: with those four files gone the same image starts
+  and renders.
+- **the DMA-BUF renderer** — flaky in the same mismatch, so the app sets
+  `WEBKIT_DISABLE_DMABUF_RENDERER=1` for itself when `APPIMAGE` is set. Set it in the
+  environment to override.
+
+`WEBKIT_FORCE_SANDBOX` does nothing on WebKitGTK 2.40+ (it only prints a warning), so it is no
+longer set; the sandbox stays on.

@@ -93,6 +93,30 @@ jobs:
           prerelease: false
           args: --bundles deb,rpm,appimage
 
+      # Tauri's AppImage bundles libwayland-* from the build host; mixed with
+      # the user's much newer Mesa that fails EGL display creation and the
+      # window stays black (verified on Fedora 44 with WebKitGTK 2.52).
+      # Dropping them so the host's are used fixes it.
+      - name: Repack the AppImage without the bundled Wayland libraries
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          v="${{ steps.meta.outputs.version }}"
+          img=$(ls src-tauri/target/release/bundle/appimage/*.AppImage | head -1)
+          echo "repacking $img"
+          curl -sSL -o /tmp/appimagetool \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x /tmp/appimagetool
+          work=$(mktemp -d)
+          cp "$img" "$work/in.AppImage"
+          (cd "$work" && ./in.AppImage --appimage-extract > /dev/null)
+          rm -f "$work"/squashfs-root/usr/lib/libwayland-*.so.*
+          ARCH=x86_64 /tmp/appimagetool --appimage-extract-and-run \
+            "$work/squashfs-root" "OpenGHub_${v}_amd64.AppImage"
+          gh release upload "v$v" "OpenGHub_${v}_amd64.AppImage" --clobber
+
       - name: Attach the PKGBUILD
         if: startsWith(github.ref, 'refs/tags/v')
         env:

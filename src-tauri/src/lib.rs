@@ -174,19 +174,17 @@ pub fn run() {
         });
 }
 
-/// The AppImage carries its own WebKitGTK, and that WebKit cannot start its
-/// bubblewrap sandbox from inside the squashfs mount: WebKitWebProcess dies
-/// and the window stays black. Its DMA-BUF renderer also trips over host
-/// Mesa on some machines. Both are turned off for AppImage runs, before the
-/// webview exists; an explicit environment setting wins.
+/// The AppImage carries its own WebKitGTK built on an older distribution,
+/// which does not always agree with the host's Mesa: its DMA-BUF renderer
+/// then fails and the window stays black. Disable it for AppImage runs.
+/// (The bundled `libwayland-*`, the other half of that mismatch, is stripped
+/// from the image at build time — see `.github/workflows/release.yml`.)
 fn appimage_webkit_workarounds() {
     if std::env::var_os("APPIMAGE").is_none() {
         return;
     }
-    for (name, value) in [("WEBKIT_FORCE_SANDBOX", "0"), ("WEBKIT_DISABLE_DMABUF_RENDERER", "1")] {
-        if std::env::var_os(name).is_none() {
-            std::env::set_var(name, value);
-        }
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
     }
 }
 
