@@ -1,7 +1,7 @@
 # Maintainer: Silvan Paul
 # Binary package built from the GitHub release's .deb; for the AUR as openghub-bin.
 pkgname=openghub-bin
-pkgver=0.1.2
+pkgver=0.1.3
 pkgrel=1
 pkgdesc="Open source Logitech G HUB for Linux — DPI, lighting, assignments, wheels, over HID++"
 arch=('x86_64')
