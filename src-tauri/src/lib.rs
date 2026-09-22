@@ -2,6 +2,7 @@
 
 pub mod apps;
 pub mod artwork;
+pub mod autostart;
 pub mod commands;
 pub mod community;
 pub mod demo;
@@ -58,6 +59,14 @@ pub fn run() {
             spawn_artwork_fetch(handle.clone(), devices);
 
             build_tray(app)?;
+            // "Start minimised to tray", and always when launched by the
+            // autostart entry: the window exists but stays hidden.
+            let minimised = autostart::started_minimized() || app.state::<Store>().get().settings.start_minimised;
+            if minimised {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.hide();
+                }
+            }
             apply_all_profiles(&handle);
             lightsync::spawn(handle.clone());
             spawn_button_pump(handle.clone());
@@ -77,6 +86,8 @@ pub fn run() {
             commands::get_connected_devices,
             commands::get_udev_rule_status,
             commands::install_udev_rule,
+            commands::get_autostart,
+            commands::set_autostart,
             commands::get_device_state,
             commands::get_device_features,
             commands::set_device_dpi,

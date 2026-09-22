@@ -167,6 +167,7 @@ function loadConfig(): Config {
 let config = loadConfig();
 
 const scriptLog: string[] = [];
+let mockAutostart = false;
 const stamp = () => new Date().toTimeString().slice(0, 8);
 
 const mockDeviceSettings = {
@@ -305,6 +306,11 @@ export async function mockInvoke<T>(command: string, args: Record<string, unknow
     }
     case "install_udev_rule":
       throw "installing the udev rule needs the desktop app";
+    case "get_autostart":
+      return mockAutostart as T;
+    case "set_autostart":
+      mockAutostart = args.on as boolean;
+      return mockAutostart as T;
 
     case "save_config":
       config = JSON.parse(JSON.stringify(args.config)) as Config;

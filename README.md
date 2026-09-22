@@ -76,6 +76,15 @@ cases rather than showing one vague message:
 - **found but silent** — a wireless device is off or asleep;
 - **hidapi unavailable** — the HID backend itself would not start.
 
+## Launch at startup
+
+*Settings → General → Launch at startup* writes `~/.config/autostart/openghub.desktop` (the
+freedesktop autostart entry every desktop honours), pointing at the running executable — or
+the `$APPIMAGE` when started from one — with `--minimized`, so a login goes straight to the
+tray with profiles and lighting applied. Turning it off removes the file; the toggle reflects
+the file, so an entry added or removed by hand is respected. *Start minimised to tray* does
+the same for manual launches.
+
 ## Running
 
 ```sh

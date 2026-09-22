@@ -11,6 +11,17 @@
   import { ui } from "$lib/stores/ui.svelte";
 
   let configPath = $state("");
+  /** Presence of the ~/.config/autostart entry, read from the backend. */
+  let autostart = $state<boolean | null>(null);
+
+  async function toggleAutostart(on: boolean) {
+    try {
+      autostart = await api.setAutostart(on);
+      ui.toast(on ? "OpenGHub will start with your session, minimised to the tray." : "OpenGHub will no longer start with your session.", "success", 3500);
+    } catch (e) {
+      ui.toast(api.errorMessage(e), "error", 6000);
+    }
+  }
   let pollSeconds = $state(60);
   let ghubCache = $state<import("$lib/types").GhubCacheInfo | null>(null);
   let importing = $state(false);
@@ -19,6 +30,7 @@
 
   onMount(async () => {
     configPath = await api.getConfigPath().catch(() => "unavailable");
+    autostart = await api.getAutostart().catch(() => null);
     pollSeconds = configStore.settings.batteryPollSeconds;
     ghubCache = await api.getGhubCacheInfo().catch(() => null);
   });
@@ -127,6 +139,13 @@ KERNEL=="hidraw*", ATTRS{idVendor}=="046d", TAG+="uaccess"`;
 
   <section class="card panel">
     <h2 class="section-title">General</h2>
+
+    <Toggle
+      checked={autostart ?? false}
+      label="Launch at startup"
+      description="Start OpenGHub with your desktop session (an entry in ~/.config/autostart), minimised to the tray so profiles and lighting are applied right away."
+      onchange={toggleAutostart}
+    />
 
     <Toggle
       checked={configStore.settings.startMinimised}

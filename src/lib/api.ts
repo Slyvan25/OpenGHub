@@ -77,6 +77,8 @@ export const getConnectedDevices = (refresh = true) =>
 export const getUdevRuleStatus = () => call<UdevRuleStatus>("get_udev_rule_status");
 /** Installs the udev rule through polkit; the desktop asks for the password. */
 export const installUdevRule = () => call<UdevRuleStatus>("install_udev_rule");
+export const getAutostart = () => call<boolean>("get_autostart");
+export const setAutostart = (on: boolean) => call<boolean>("set_autostart", { on });
 
 export const getDeviceState = (deviceId: string) =>
   call<Device>("get_device_state", { deviceId });

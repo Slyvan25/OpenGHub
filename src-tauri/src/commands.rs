@@ -79,6 +79,21 @@ pub async fn install_udev_rule(app: AppHandle, manager: State<'_, DeviceManager>
     Ok(status)
 }
 
+// ---------------------------------------------------------------------------
+// Launch at startup
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn get_autostart() -> Result<bool> {
+    Ok(crate::autostart::is_enabled())
+}
+
+/// Writes or removes the `~/.config/autostart` entry; returns the new state.
+#[tauri::command]
+pub async fn set_autostart(on: bool) -> Result<bool> {
+    crate::autostart::set_enabled(on)
+}
+
 /// Rescans the bus and returns everything we can talk to.
 #[tauri::command]
 pub async fn get_connected_devices(
