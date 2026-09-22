@@ -1,6 +1,6 @@
 [package]
 name = "openghub"
-version = "0.1.0"
+version = "0.1.1"
 description = "OpenGHub — an open source, Linux-native reimplementation of Logitech G HUB"
 authors = ["OpenGHub contributors"]
 edition = "2021"
