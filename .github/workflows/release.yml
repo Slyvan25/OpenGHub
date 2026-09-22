@@ -1,0 +1,83 @@
+name: Release
+
+# Tag a commit `vX.Y.Z` (or run this by hand) and a GitHub release appears with
+# a .deb (Debian, Ubuntu, Mint, Pop!_OS), an .rpm (Fedora, openSUSE, RHEL) and
+# an AppImage (anything else), plus the Arch PKGBUILD that wraps the .deb.
+# Built on Ubuntu 22.04 so the binaries run on any distribution with glibc 2.35+.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Linux packages
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: System libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+            libudev-dev libssl-dev build-essential pkg-config patchelf \
+            file wget curl xdg-utils
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      - name: Version from the tag
+        id: meta
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Arch PKGBUILD for this version
+        run: |
+          mkdir -p dist
+          sed "s/^pkgver=.*/pkgver=${{ steps.meta.outputs.version }}/" packaging/arch/PKGBUILD > dist/PKGBUILD
+          cp packaging/arch/openghub-bin.install dist/
+
+      - name: Build and publish
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # AppImage bundling downloads linuxdeploy; keep the build reproducible.
+          NO_STRIP: "false"
+        with:
+          tagName: v__VERSION__
+          releaseName: OpenGHub v__VERSION__
+          releaseBody: |
+            **Install**
+            - Debian / Ubuntu / Mint / Pop!_OS: `sudo apt install ./OpenGHub_*_amd64.deb`
+            - Fedora / openSUSE / RHEL: `sudo dnf install ./OpenGHub-*.rpm`
+            - Arch / Manjaro / EndeavourOS: `makepkg -si` with the attached PKGBUILD (AUR: `openghub-bin`)
+            - Anything else: `chmod +x OpenGHub_*.AppImage && ./OpenGHub_*.AppImage`
+
+            The .deb and .rpm install the udev rule; the AppImage offers to install it on first launch.
+          releaseDraft: false
+          prerelease: false
+          args: --bundles deb,rpm,appimage
+
+      - name: Attach the PKGBUILD
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "v${{ steps.meta.outputs.version }}" dist/PKGBUILD dist/openghub-bin.install --clobber

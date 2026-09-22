@@ -18,6 +18,8 @@ use crate::hidpp::{Error, Result};
 /// The rule as shipped with this build.
 pub const RULE: &str = include_str!("../../packaging/70-openghub.rules");
 pub const RULE_PATH: &str = "/etc/udev/rules.d/70-openghub.rules";
+/// Where the .deb / .rpm put it; a rule there counts just the same.
+pub const PACKAGED_RULE_PATH: &str = "/usr/lib/udev/rules.d/70-openghub.rules";
 /// Earlier builds installed this name; its number is wrong (see the module docs).
 pub const STALE_RULE_PATH: &str = "/etc/udev/rules.d/99-openghub.rules";
 
@@ -37,13 +39,16 @@ pub struct UdevRuleStatus {
 
 /// Compares what is installed with what this build ships.
 pub fn status() -> UdevRuleStatus {
-    let installed = std::fs::read_to_string(RULE_PATH).ok();
+    // /etc overrides /usr/lib for the same file name, so check it first.
+    let found = [RULE_PATH, PACKAGED_RULE_PATH]
+        .into_iter()
+        .find_map(|p| std::fs::read_to_string(p).ok().map(|s| (p, s)));
     UdevRuleStatus {
-        installed: installed.is_some(),
-        current: installed.as_deref().map(|s| normalise(s) == normalise(RULE)).unwrap_or(false),
+        installed: found.is_some(),
+        current: found.as_ref().map(|(_, s)| normalise(s) == normalise(RULE)).unwrap_or(false),
         stale: Path::new(STALE_RULE_PATH).exists(),
         can_install: which("pkexec"),
-        path: RULE_PATH.into(),
+        path: found.as_ref().map(|(p, _)| p.to_string()).unwrap_or_else(|| RULE_PATH.into()),
     }
 }
 

@@ -42,7 +42,8 @@
     "active": true,
     "targets": [
       "deb",
-      "rpm"
+      "rpm",
+      "appimage"
     ],
     "icon": [
       "icons/32x32.png",
@@ -57,14 +58,39 @@
     "linux": {
       "deb": {
         "depends": [
-          "libudev1"
-        ]
+          "libudev1",
+          "libwebkit2gtk-4.1-0",
+          "libayatana-appindicator3-1"
+        ],
+        "recommends": [
+          "gstreamer1.0-tools",
+          "gstreamer1.0-pipewire",
+          "pulseaudio-utils"
+        ],
+        "files": {
+          "/usr/lib/udev/rules.d/70-openghub.rules": "../packaging/70-openghub.rules"
+        },
+        "postInstallScript": "../packaging/postinstall.sh",
+        "section": "utils"
       },
       "rpm": {
         "depends": [
-          "systemd-libs"
-        ]
+          "systemd-libs",
+          "webkit2gtk4.1",
+          "libayatana-appindicator-gtk3"
+        ],
+        "files": {
+          "/usr/lib/udev/rules.d/70-openghub.rules": "../packaging/70-openghub.rules"
+        },
+        "postInstallScript": "../packaging/postinstall.sh",
+        "epoch": 0,
+        "release": "1"
+      },
+      "appimage": {
+        "bundleMediaFramework": false
       }
-    }
+    },
+    "license": "MIT",
+    "homepage": "https://github.com/Slyvan25/OpenGHub"
   }
 }

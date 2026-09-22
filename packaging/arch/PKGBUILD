@@ -1,0 +1,25 @@
+# Maintainer: Silvan Paul
+# Binary package built from the GitHub release's .deb; for the AUR as openghub-bin.
+pkgname=openghub-bin
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Open source Logitech G HUB for Linux — DPI, lighting, assignments, wheels, over HID++"
+arch=('x86_64')
+url="https://github.com/Slyvan25/OpenGHub"
+license=('MIT')
+depends=('webkit2gtk-4.1' 'libayatana-appindicator' 'systemd-libs' 'gtk3')
+optdepends=('gstreamer: screen sampler'
+            'gst-plugin-pipewire: screen sampler'
+            'libpulse: audio visualizer (parec)')
+provides=('openghub')
+conflicts=('openghub')
+source=("${url}/releases/download/v${pkgver}/OpenGHub_${pkgver}_amd64.deb")
+install=openghub-bin.install
+sha256sums=('SKIP')
+
+package() {
+    bsdtar -xf data.tar.* -C "$pkgdir"
+    # Debian puts the rule in /usr/lib/udev; that is right for Arch too.
+    install -Dm644 "$pkgdir/usr/lib/udev/rules.d/70-openghub.rules" \
+        "$pkgdir/usr/lib/udev/rules.d/70-openghub.rules"
+}
