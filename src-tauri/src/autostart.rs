@@ -51,6 +51,7 @@ pub fn set_enabled(on: bool) -> Result<bool> {
         return Ok(false);
     }
     let exe = exec_path()?;
+    install_user_icon();
     let contents = entry(&exe.to_string_lossy());
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| Error::other(format!("could not create {}: {e}", dir.display())))?;
@@ -76,6 +77,27 @@ fn entry(exec: &str) -> String {
          X-GNOME-Autostart-enabled=true\n\
          X-KDE-autostart-after=panel\n"
     )
+}
+
+/// The entry says `Icon=openghub`; a packaged install ships that in the
+/// hicolor theme, a development build does not — so drop a copy into the
+/// user's icon directory when there is none.
+fn install_user_icon() {
+    let Some(data) = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
+    else {
+        return;
+    };
+    let dir = data.join("icons/hicolor/256x256/apps");
+    let path = dir.join("openghub.png");
+    if path.exists() {
+        return;
+    }
+    if std::fs::create_dir_all(&dir).is_ok() {
+        let _ = std::fs::write(&path, include_bytes!("../icons/128x128@2x.png"));
+    }
 }
 
 /// `true` when this process was started by the autostart entry (or anyone

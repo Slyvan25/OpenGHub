@@ -179,10 +179,14 @@ pub const EVENT_NAVIGATE: &str = "navigate";
 /// connection and battery), the four sections, and Close.
 fn build_tray(app: &tauri::App) -> tauri::Result<()> {
     let menu = tray_menu(app.handle())?;
+    // A light variant of the logo: the app icon's black disc would vanish
+    // on the dark panels most desktops use.
+    let tray_icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray/app.png"))
+        .ok()
+        .or_else(|| app.default_window_icon().cloned())
+        .ok_or_else(|| tauri::Error::AssetNotFound("tray icon".into()))?;
     TrayIconBuilder::with_id("main")
-        .icon(app.default_window_icon().cloned().ok_or_else(|| {
-            tauri::Error::AssetNotFound("default window icon".into())
-        })?)
+        .icon(tray_icon)
         .tooltip("OpenGHub")
         .menu(&menu)
         .show_menu_on_left_click(true)
