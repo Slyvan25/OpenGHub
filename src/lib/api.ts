@@ -66,6 +66,7 @@ export const events = {
   deviceUpdated: "device-updated",
   activeApplication: "active-application",
   configChanged: "config-changed",
+  navigate: "navigate",
   artworkChanged: "artwork-changed",
   wheelState: "wheel-state",
 } as const;

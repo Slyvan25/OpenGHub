@@ -75,6 +75,7 @@ pub async fn install_udev_rule(app: AppHandle, manager: State<'_, DeviceManager>
     let devices = manager.refresh();
     let payload = DeviceListPayload::build(&manager, devices);
     let _ = app.emit(EVENT_DEVICES, &payload);
+    crate::refresh_tray_menu(&app);
     crate::apply_all_profiles(&app);
     Ok(status)
 }
@@ -108,6 +109,7 @@ pub async fn get_connected_devices(
     };
     let payload = DeviceListPayload::build(&manager, devices);
     let _ = app.emit(EVENT_DEVICES, &payload);
+    crate::refresh_tray_menu(&app);
     crate::apply_all_profiles(&app);
     // Newly connected devices get their render fetched in the background.
     crate::spawn_artwork_fetch(app, payload.devices.clone());
@@ -402,6 +404,7 @@ pub async fn set_demo_mode(
     let devices = manager.set_demo(enabled);
     let payload = DeviceListPayload::build(&manager, devices);
     let _ = app.emit(EVENT_DEVICES, &payload);
+    crate::refresh_tray_menu(&app);
     Ok(payload)
 }
 

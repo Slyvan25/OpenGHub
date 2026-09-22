@@ -12,6 +12,7 @@
   import type { Config } from "$lib/types";
   import TopBar from "$lib/components/TopBar.svelte";
   import { page } from "$app/state";
+  import { goto } from "$app/navigation";
 
   let { children } = $props();
 
@@ -41,12 +42,15 @@
         artwork.load();
         ui.toast("Device artwork downloaded.", "success", 3000);
       });
+      // The tray menu's Devices / Games / Community / Profiles entries.
+      const unNav = await api.on<string>(api.events.navigate, (route) => goto(route));
       const prev = unsubscribe;
       unsubscribe = () => {
         prev?.();
         unConfig();
         unApp();
         unArt();
+        unNav();
       };
       await Promise.all([configStore.load(), deviceStore.load(), artwork.load()]);
       if (!api.isTauri) {

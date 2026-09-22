@@ -168,26 +168,30 @@ pub fn run() {
         });
 }
 
-fn build_tray(app: &tauri::App) -> tauri::Result<()> {
-    let show = MenuItem::with_id(app, "show", "Open OpenGHub", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &quit])?;
+/// Emitted with a route when a tray menu entry is chosen; the layout navigates.
+pub const EVENT_NAVIGATE: &str = "navigate";
 
+/// The tray icon with G HUB's menu: a block per connected device (name, then
+/// connection and battery), the four sections, and Close.
+fn build_tray(app: &tauri::App) -> tauri::Result<()> {
+    let menu = tray_menu(app.handle())?;
     TrayIconBuilder::with_id("main")
         .icon(app.default_window_icon().cloned().ok_or_else(|| {
             tauri::Error::AssetNotFound("default window icon".into())
         })?)
         .tooltip("OpenGHub")
         .menu(&menu)
-        .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| match event.id.as_ref() {
-            "show" => {
+        .show_menu_on_left_click(true)
+        .on_menu_event(|app, event| {
+            let id = event.id.as_ref();
+            if let Some(route) = id.strip_prefix("nav:") {
                 if let Some(w) = app.get_webview_window("main") {
                     let _ = w.show();
+                    let _ = w.unminimize();
                     let _ = w.set_focus();
                 }
-            }
-            "quit" => {
+                let _ = app.emit(EVENT_NAVIGATE, route.to_string());
+            } else if id == "quit" {
                 // Give the devices back before going: identity remapping,
                 // spy off, onboard mode, released keys.
                 app.state::<std::sync::Arc<scripting::Scripting>>().stop();
@@ -195,10 +199,75 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
                 app.state::<std::sync::Arc<remap::Injector>>().release_all();
                 app.exit(0)
             }
-            _ => {}
         })
         .build(app)?;
     Ok(())
+}
+
+/// Rebuilds the tray menu from the current device snapshots — after a rescan
+/// and after every battery reading, so the header stays truthful.
+pub fn refresh_tray_menu(app: &tauri::AppHandle) {
+    if let Some(tray) = app.tray_by_id("main") {
+        match tray_menu(app) {
+            Ok(menu) => {
+                if let Err(e) = tray.set_menu(Some(menu)) {
+                    log::debug!("tray menu not updated: {e}");
+                }
+            }
+            Err(e) => log::debug!("tray menu not built: {e}"),
+        }
+    }
+}
+
+fn tray_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    use tauri::image::Image;
+    use tauri::menu::{IconMenuItem, PredefinedMenuItem};
+
+    let icon = |png: &'static [u8]| Image::from_bytes(png).ok();
+    let menu = Menu::new(app)?;
+
+    // One block per device, as G HUB lists them: the name in its own row,
+    // then the connection and the battery. Both rows are inert.
+    let manager = app.state::<DeviceManager>();
+    let mut any = false;
+    for snap in manager.snapshots() {
+        if snap.demo || !snap.online || matches!(snap.kind, hidpp::registry::DeviceKind::Receiver) {
+            continue;
+        }
+        any = true;
+        menu.append(&MenuItem::with_id(app, format!("dev:{}", snap.id), &snap.name, false, None::<&str>)?)?;
+        let (conn_icon, conn_label) = match snap.connection {
+            state::Connection::Wired => (icon(include_bytes!("../icons/tray/usb.png")), "WIRED"),
+            state::Connection::Bluetooth => (icon(include_bytes!("../icons/tray/bluetooth.png")), "BLUETOOTH"),
+            state::Connection::Wireless | state::Connection::Receiver => (icon(include_bytes!("../icons/tray/wireless.png")), "LIGHTSPEED"),
+        };
+        let mut line = conn_label.to_string();
+        if let Some(b) = &snap.battery {
+            let charging = matches!(
+                b.status,
+                hidpp::features::ChargeStatus::Charging | hidpp::features::ChargeStatus::SlowCharging | hidpp::features::ChargeStatus::ChargingFull
+            );
+            line = format!("{line}     {}{}%", if charging { "⚡ " } else { "" }, b.percentage);
+        }
+        menu.append(&IconMenuItem::with_id(app, format!("status:{}", snap.id), &line, false, conn_icon, None::<&str>)?)?;
+        menu.append(&PredefinedMenuItem::separator(app)?)?;
+    }
+    if !any {
+        menu.append(&MenuItem::with_id(app, "dev:none", "No devices connected", false, None::<&str>)?)?;
+        menu.append(&PredefinedMenuItem::separator(app)?)?;
+    }
+
+    for (route, label, png) in [
+        ("/", "Devices", &include_bytes!("../icons/tray/devices.png")[..]),
+        ("/games", "Games", &include_bytes!("../icons/tray/games.png")[..]),
+        ("/community", "Community", &include_bytes!("../icons/tray/community.png")[..]),
+        ("/profiles", "Profiles", &include_bytes!("../icons/tray/profiles.png")[..]),
+    ] {
+        menu.append(&IconMenuItem::with_id(app, format!("nav:{route}"), label, true, icon(png), None::<&str>)?)?;
+    }
+    menu.append(&PredefinedMenuItem::separator(app)?)?;
+    menu.append(&MenuItem::with_id(app, "quit", "Close OpenGHub", true, None::<&str>)?)?;
+    Ok(menu)
 }
 
 /// Emitted after artwork was fetched for a device, so the UI rescans.
@@ -869,9 +938,13 @@ fn spawn_battery_poller(app: tauri::AppHandle) {
 
             match events {
                 Ok(events) => {
+                    let any = !events.is_empty();
                     for (device_id, battery) in events {
                         low_battery_check(&app, &device_id, battery.percentage, &mut dimmed);
                         let _ = app.emit(EVENT_BATTERY, BatteryEvent { device_id, battery });
+                    }
+                    if any {
+                        refresh_tray_menu(&app);
                     }
                 }
                 Err(e) => log::warn!("battery poll task failed: {e}"),
