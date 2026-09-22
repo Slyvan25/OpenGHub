@@ -2,36 +2,27 @@
 <!-- Created with Inkscape (http://www.inkscape.org/) -->
 
 <svg
-   width="132.49316mm"
-   height="132.49316mm"
-   viewBox="0 0 132.49316 132.49316"
+   width="80.386139mm"
+   height="82.618301mm"
+   viewBox="0 0 80.386136 82.618299"
    version="1.1"
    id="svg1"
    xml:space="preserve"
    xmlns="http://www.w3.org/2000/svg"
    xmlns:svg="http://www.w3.org/2000/svg"><defs
-     id="defs1"><rect
-       x="58.111458"
-       y="21.307535"
-       width="482.91608"
-       height="380.27411"
-       id="rect1" /></defs><g
+     id="defs1" /><g
      id="layer1"
-     transform="translate(-39.986188,-66.472211)"><circle
+     transform="translate(-65.390232,-92.00779)"><circle
        style="fill:#000000;fill-opacity:1;stroke:#000000;stroke-width:17.093;stroke-dasharray:none;stroke-opacity:1"
        id="path1"
        cx="106.23277"
        cy="132.7188"
-       r="57.700085" /><text
-       xml:space="preserve"
-       transform="matrix(0.3114053,0,0,0.3114053,50.284534,73.978262)"
+       r="57.700085" /><path
+       style="font-weight:bold;font-size:298.667px;font-family:'Brown Logitech Pan';-inkscape-font-specification:'Brown Logitech Pan';white-space:pre;fill:#ffffff;stroke:#ffffff;stroke-width:50.2677"
+       d="m 73.642012,190.55127 c 0,60.92807 44.800048,107.52012 103.936108,107.52012 59.13607,0 103.93612,-46.59205 103.93612,-107.52012 0,-60.92807 -44.80005,-107.520118 -103.93612,-107.520118 -59.13606,0 -103.936108,46.592048 -103.936108,107.520118 z m 17.920019,0 c 0,-49.57872 35.541369,-90.4961 86.016089,-90.4961 50.47473,0 86.0161,40.91738 86.0161,90.4961 0,49.57872 -35.54137,90.4961 -86.0161,90.4961 -50.47472,0 -86.016089,-40.91738 -86.016089,-90.4961 z"
        id="text1"
-       style="font-weight:300;font-size:298.667px;font-family:Cormorant;-inkscape-font-specification:'Cormorant Light';writing-mode:lr-tb;direction:ltr;white-space:pre;shape-inside:url(#rect1);fill:#ffffff;fill-opacity:1;stroke:#ffffff;stroke-width:50.2677;stroke-dasharray:none;stroke-opacity:1"><tspan
-         x="58.111328"
-         y="295.08472"
-         id="tspan3"><tspan
-           style="font-weight:bold;font-family:'Brown Logitech Pan';-inkscape-font-specification:'Brown Logitech Pan'"
-           id="tspan2">O</tspan></tspan></text><rect
+       transform="matrix(0.3114053,0,0,0.3114053,50.284534,73.978262)"
+       aria-label="O" /><rect
        style="fill:#000000;fill-opacity:1;stroke:#000000;stroke-width:11.9144;stroke-dasharray:none;stroke-opacity:1"
        id="rect2"
        width="5.8889441"

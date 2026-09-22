@@ -25,14 +25,12 @@
 
 <header class="topbar" data-tauri-drag-region>
   <a class="mark" href="/" aria-label="OpenGHub home">
-    <!-- The OpenGHub logo (static/logo.svg): disc in the text colour, glyph cut out. -->
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 132.49316 132.49316" width="30" height="30" aria-hidden="true">
-      <g transform="translate(-39.986188,-66.472211)">
-        <circle cx="106.23277" cy="132.7188" r="57.700085" fill="currentColor" stroke="currentColor" stroke-width="17.093"/>
-        <path d="m 110.97539,190.55127 c 0,-39.42404 27.47736,-71.68008 66.0054,-71.68008 38.52804,0 66.00541,32.25604 66.00541,71.68008 0,39.42404 -27.47737,71.68008 -66.00541,71.68008 -38.52804,0 -66.0054,-32.25604 -66.0054,-71.68008 z m 172.33085,0 c 0,-62.12273 -46.29338,-107.520118 -106.32545,-107.520118 -60.03206,0 -106.325448,45.397388 -106.325448,107.520118 0,62.12273 46.293388,107.52012 106.325448,107.52012 60.03207,0 106.32545,-45.39739 106.32545,-107.52012 z" transform="matrix(0.3114053,0,0,0.3114053,50.284534,73.978262)" fill="var(--bg)" stroke="var(--bg)" stroke-width="50.2677"/>
-        <rect x="102.20329" y="136.95477" width="7.9145093" height="49.537155" fill="currentColor" stroke="currentColor" stroke-width="9.8888"/>
-        <rect x="101.92165" y="167.54222" width="36.668324" height="9.5465488" fill="currentColor" stroke="currentColor" stroke-width="9.344"/>
-        <circle cx="105.94232" cy="133.34341" r="2.2346151" fill="var(--bg)" stroke="var(--bg)" stroke-width="5.56782"/>
+    <!-- The OpenGHub logo (static/logo.svg), as designed: black disc, glyph in the text colour. -->
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 132.49317 132.49317" width="30" height="30" aria-hidden="true">
+      <g transform="translate(-39.986185,-66.472215)">
+        <circle cx="106.23277" cy="132.7188" r="57.700085" fill="#000" stroke="#000" stroke-width="17.093"/>
+        <path d="m 73.642012,190.55127 c 0,60.92807 44.800048,107.52012 103.936108,107.52012 59.13607,0 103.93612,-46.59205 103.93612,-107.52012 0,-60.92807 -44.80005,-107.520118 -103.93612,-107.520118 -59.13606,0 -103.936108,46.592048 -103.936108,107.520118 z m 17.920019,0 c 0,-49.57872 35.541369,-90.4961 86.016089,-90.4961 50.47473,0 86.0161,40.91738 86.0161,90.4961 0,49.57872 -35.54137,90.4961 -86.0161,90.4961 -50.47472,0 -86.016089,-40.91738 -86.016089,-90.4961 z" transform="matrix(0.3114053,0,0,0.3114053,50.284534,73.978262)" fill="currentColor" stroke="currentColor" stroke-width="50.2677"/>
+        <rect x="103.21607" y="88.835732" width="5.8889441" height="96.64341" fill="#000" stroke="#000" stroke-width="11.9144"/>
       </g>
     </svg>
   </a>
