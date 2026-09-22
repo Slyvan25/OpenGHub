@@ -8,7 +8,7 @@
 
 use std::process::Command;
 
-pub const APP_ID: &str = "com.openghub.app";
+pub const APP_ID: &str = "io.github.slyvan25.OpenGHub";
 
 /// `/.flatpak-info` exists only inside a Flatpak sandbox.
 pub fn in_flatpak() -> bool {

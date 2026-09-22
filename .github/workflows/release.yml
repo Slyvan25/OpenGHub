@@ -108,16 +108,29 @@ jobs:
         run: |
           v="${{ steps.meta.outputs.version }}"
           gh release download "v$v" --pattern "OpenGHub_*_amd64.deb" --dir packaging/flatpak
-          sed -i "s/OpenGHub_0.1.0_amd64.deb/OpenGHub_${v}_amd64.deb/" packaging/flatpak/com.openghub.app.yml
-          sed -i "s/version=\"0.1.0\" date=\"[0-9-]*\"/version=\"${v}\" date=\"$(date +%F)\"/" packaging/flatpak/com.openghub.app.metainfo.xml
+          sed -i "s/OpenGHub_0.1.0_amd64.deb/OpenGHub_${v}_amd64.deb/" packaging/flatpak/io.github.slyvan25.OpenGHub.yml
+          sed -i "s/version=\"0.1.0\" date=\"[0-9-]*\"/version=\"${v}\" date=\"$(date +%F)\"/" packaging/flatpak/io.github.slyvan25.OpenGHub.metainfo.xml
 
       - name: Build and bundle
         run: |
           v="${{ steps.meta.outputs.version }}"
-          flatpak-builder --user --force-clean --repo=repo build-dir packaging/flatpak/com.openghub.app.yml
-          flatpak build-bundle repo "OpenGHub_${v}.flatpak" com.openghub.app
+          flatpak-builder --user --force-clean --repo=repo build-dir packaging/flatpak/io.github.slyvan25.OpenGHub.yml
+          flatpak build-bundle repo "OpenGHub_${v}.flatpak" io.github.slyvan25.OpenGHub
 
-      - name: Attach the bundle
+      - name: The manifest to submit to Flathub
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "v${{ steps.meta.outputs.version }}" "OpenGHub_${{ steps.meta.outputs.version }}.flatpak" --clobber
+        run: |
+          v="${{ steps.meta.outputs.version }}"
+          mkdir -p flathub
+          packaging/flatpak/make-flathub-manifest.sh "$v" "packaging/flatpak/OpenGHub_${v}_amd64.deb" \
+            > "flathub/io.github.slyvan25.OpenGHub.yml"
+          cp packaging/flatpak/io.github.slyvan25.OpenGHub.metainfo.xml flathub/
+          tar -czf "flathub-manifest-${v}.tar.gz" -C flathub .
+
+      - name: Attach the bundle and the Flathub manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="${{ steps.meta.outputs.version }}"
+          gh release upload "v$v" "OpenGHub_${v}.flatpak" "flathub-manifest-${v}.tar.gz" --clobber

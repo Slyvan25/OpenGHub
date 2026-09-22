@@ -32,3 +32,11 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: cargo test --manifest-path src-tauri/Cargo.toml --lib
+
+  metainfo:
+    name: AppStream metainfo
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends appstream
+      - run: appstreamcli validate --no-net packaging/flatpak/io.github.slyvan25.OpenGHub.metainfo.xml

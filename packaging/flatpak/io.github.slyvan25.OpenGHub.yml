@@ -1,6 +1,6 @@
 # Flatpak manifest. Built in CI from the release .deb (see release.yml), so the
 # binary is identical to the other packages; `flatpak-builder --user --install
-# build-dir packaging/flatpak/com.openghub.app.yml` builds it locally once
+# build-dir packaging/flatpak/io.github.slyvan25.OpenGHub.yml` builds it locally once
 # OpenGHub_<version>_amd64.deb sits next to this file.
 #
 # What the sandbox needs and why:
@@ -15,7 +15,7 @@
 #   --filesystem=xdg-config/autostart:create
 #                                     "Launch at startup"
 #   read-only views of the game launchers' folders, for the Games tab
-id: com.openghub.app
+id: io.github.slyvan25.OpenGHub
 runtime: org.gnome.Platform
 runtime-version: "47"
 sdk: org.gnome.Sdk
@@ -46,12 +46,12 @@ modules:
       - ar -x OpenGHub_*_amd64.deb
       - tar -xf data.tar.*
       - install -Dm755 usr/bin/openghub /app/bin/openghub
-      - install -Dm644 usr/share/applications/OpenGHub.desktop /app/share/applications/com.openghub.app.desktop
-      - sed -i 's/^Icon=.*/Icon=com.openghub.app/' /app/share/applications/com.openghub.app.desktop
-      - for s in 32x32 128x128 256x256@2; do install -Dm644 usr/share/icons/hicolor/$s/apps/openghub.png /app/share/icons/hicolor/$s/apps/com.openghub.app.png; done
-      - install -Dm644 com.openghub.app.metainfo.xml /app/share/metainfo/com.openghub.app.metainfo.xml
+      - install -Dm644 usr/share/applications/OpenGHub.desktop /app/share/applications/io.github.slyvan25.OpenGHub.desktop
+      - sed -i 's/^Icon=.*/Icon=io.github.slyvan25.OpenGHub/' /app/share/applications/io.github.slyvan25.OpenGHub.desktop
+      - for s in 32x32 128x128 256x256@2; do install -Dm644 usr/share/icons/hicolor/$s/apps/openghub.png /app/share/icons/hicolor/$s/apps/io.github.slyvan25.OpenGHub.png; done
+      - install -Dm644 io.github.slyvan25.OpenGHub.metainfo.xml /app/share/metainfo/io.github.slyvan25.OpenGHub.metainfo.xml
     sources:
       - type: file
         path: OpenGHub_0.1.0_amd64.deb
       - type: file
-        path: com.openghub.app.metainfo.xml
+        path: io.github.slyvan25.OpenGHub.metainfo.xml

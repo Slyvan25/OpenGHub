@@ -49,13 +49,13 @@ the same for manual launches.
 
 ## Flatpak
 
-The Flatpak (`packaging/flatpak/com.openghub.app.yml`) is built from the release .deb, so it is
+The Flatpak (`packaging/flatpak/io.github.slyvan25.OpenGHub.yml`) is built from the release .deb, so it is
 the same binary. The sandbox gets `--device=all` (there is no portal for `hidraw` or `uinput`)
 and talks to `org.freedesktop.Flatpak`, through which every helper process runs **on the host**
 via `flatpak-spawn --host`: `pkexec` for the udev rule (the rule travels inline, base64-encoded,
 because the host cannot see the sandbox's `/tmp`), `gst-launch-1.0` with the portal's PipeWire
 fd forwarded and `parec` for LIGHTSYNC, `steam` / `lutris` / `xdg-open` for the Games tab, and
-`loginctl` for "lock computer". "Launch at startup" writes `Exec=flatpak run com.openghub.app`
+`loginctl` for "lock computer". "Launch at startup" writes `Exec=flatpak run io.github.slyvan25.OpenGHub`
 and the launchers' folders are mounted read-only for the Games tab. Everything else — HID++,
 the force-feedback driver, the virtual keyboard — runs inside the sandbox as it does natively.
 

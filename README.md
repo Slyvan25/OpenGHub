@@ -15,6 +15,10 @@
   <a href="LICENSE"><img alt="MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
 </p>
 
+<p align="center">
+  <img src="docs/screenshots/devices.png" width="860" alt="OpenGHub's device list">
+</p>
+
 ---
 
 OpenGHub talks to Logitech peripherals directly over **HID++ 2.0** through `hidraw`, the way G HUB does on Windows — so the things the device itself supports work exactly as they do there, and the things G HUB does in software are done here in userspace. Built with Tauri 2, Svelte 5 and Rust.
@@ -86,6 +90,7 @@ Rust 1.77+ and Node 20+. `npm run dev` serves the interface in a browser against
 - [Lighting and artwork](docs/lighting.md) — zones, software effects, where the renders come from
 - [Profiles, games and scripting](docs/profiles.md) — per-game profiles, community profiles, G HUB import, Lua
 - [Developing](docs/development.md)
+- [Publishing on Flathub](docs/flathub.md)
 
 ## Contributing
 
