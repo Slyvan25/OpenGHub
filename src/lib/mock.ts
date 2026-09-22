@@ -292,6 +292,20 @@ export async function mockInvoke<T>(command: string, args: Record<string, unknow
     case "get_config":
       return structuredClone(config) as T;
 
+    case "get_udev_rule_status": {
+      // `?udev=missing` / `?udev=outdated` previews the first-run dialog.
+      const want = new URLSearchParams(location.search).get("udev");
+      return {
+        installed: want === "outdated",
+        current: !want,
+        stale: want === "outdated",
+        canInstall: true,
+        path: "/etc/udev/rules.d/70-openghub.rules",
+      } as T;
+    }
+    case "install_udev_rule":
+      throw "installing the udev rule needs the desktop app";
+
     case "save_config":
       config = JSON.parse(JSON.stringify(args.config)) as Config;
       return persist() as T;

@@ -7,6 +7,7 @@
   import { deviceStore } from "$lib/stores/devices.svelte";
   import { ui } from "$lib/stores/ui.svelte";
   import TitleBar from "$lib/components/TitleBar.svelte";
+  import PermissionsSetup from "$lib/components/PermissionsSetup.svelte";
   import Toasts from "$lib/components/Toasts.svelte";
   import type { Config } from "$lib/types";
   import TopBar from "$lib/components/TopBar.svelte";
@@ -67,6 +68,7 @@
   </main>
 </div>
 
+<PermissionsSetup />
 <Toasts />
 
 <style>

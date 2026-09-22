@@ -56,6 +56,29 @@ impl DeviceListPayload {
 // Devices
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Device permissions (udev rule)
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn get_udev_rule_status() -> Result<crate::permissions::UdevRuleStatus> {
+    Ok(crate::permissions::status())
+}
+
+/// Installs this build's udev rule through polkit (the desktop asks for the
+/// password), then rescans so devices that were root-only come up.
+#[tauri::command]
+pub async fn install_udev_rule(app: AppHandle, manager: State<'_, DeviceManager>) -> Result<crate::permissions::UdevRuleStatus> {
+    let status = tauri::async_runtime::spawn_blocking(crate::permissions::install)
+        .await
+        .map_err(|e| Error::other(e.to_string()))??;
+    let devices = manager.refresh();
+    let payload = DeviceListPayload::build(&manager, devices);
+    let _ = app.emit(EVENT_DEVICES, &payload);
+    crate::apply_all_profiles(&app);
+    Ok(status)
+}
+
 /// Rescans the bus and returns everything we can talk to.
 #[tauri::command]
 pub async fn get_connected_devices(

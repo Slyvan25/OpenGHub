@@ -10,6 +10,7 @@ pub mod games;
 pub mod ghub_settings;
 pub mod keymap;
 pub mod lightsync;
+pub mod permissions;
 pub mod remap;
 pub mod scripting;
 pub mod hidpp;
@@ -74,6 +75,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_connected_devices,
+            commands::get_udev_rule_status,
+            commands::install_udev_rule,
             commands::get_device_state,
             commands::get_device_features,
             commands::set_device_dpi,

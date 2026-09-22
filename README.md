@@ -45,6 +45,15 @@ kernel module, no proprietary daemon.
 HID++ needs read/write access to the device's `hidraw` node, which desktop users do not get
 by default — on most distributions `/dev/hidraw*` is `root:root 0600`.
 
+**The app does this for you.** On launch OpenGHub checks `/etc/udev/rules.d/70-openghub.rules`
+against the rule it was built with; if it is missing or out of date (older builds shipped a
+`99-` file, and the rule has since grown a `/dev/uinput` line) it offers to install it. The
+install runs through polkit (`pkexec`), so your desktop shows its own password prompt and the
+app never handles the password; it writes the rule, removes a stale `99-openghub.rules`,
+reloads udev and re-triggers the nodes, then rescans. "Not now" skips it for this launch,
+"Don't ask again" for good — the Devices page keeps an *Install device access* button either
+way. Without polkit, or by hand:
+
 ```sh
 sudo cp packaging/70-openghub.rules /etc/udev/rules.d/
 sudo udevadm control --reload-rules

@@ -332,6 +332,17 @@ export interface Settings {
   screenRestoreToken?: string | null;
   /** Devices switched to on-board memory mode. */
   onboardModeDevices?: string[];
+  /** "Don't ask again" on the first-run device-permissions dialog. */
+  udevSetupDismissed?: boolean;
+}
+
+/** State of the udev rule that grants access to Logitech devices and uinput. */
+export interface UdevRuleStatus {
+  installed: boolean;
+  current: boolean;
+  stale: boolean;
+  canInstall: boolean;
+  path: string;
 }
 
 // -- community profiles ----------------------------------------------------

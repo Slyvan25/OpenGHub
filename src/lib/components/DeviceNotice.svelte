@@ -4,6 +4,7 @@
    * present but this user cannot open its hidraw node" need entirely different
    * fixes, so each gets its own message and call to action.
    */
+  import * as api from "$lib/api";
   import Icon from "$lib/components/Icon.svelte";
   import { ui } from "$lib/stores/ui.svelte";
   import type { EmptyReason } from "$lib/types";
@@ -34,6 +35,22 @@ sudo udevadm trigger --action=add --subsystem-match=hidraw`;
       : null,
   );
 
+  let installing = $state(false);
+
+  /** Installs the rule through polkit; the desktop asks for the password. */
+  async function installRule() {
+    installing = true;
+    try {
+      await api.installUdevRule();
+      ui.toast("Device access set up. Wireless devices may need their receiver unplugged and reconnected once.", "success", 7000);
+      onrescan();
+    } catch (e) {
+      ui.toast(api.errorMessage(e), "error", 7000);
+    } finally {
+      installing = false;
+    }
+  }
+
   async function copyCommands() {
     try {
       await navigator.clipboard.writeText(UDEV_RULE);
@@ -63,12 +80,16 @@ sudo udevadm trigger --action=add --subsystem-match=hidraw`;
       </strong>
       <p class="devices">{permission.devices.join(", ")}</p>
       <p>
-        The <code>hidraw</code> nodes are root-only on this system. Install the udev rule, then
-        unplug and reconnect the device (or its receiver):
+        The <code>hidraw</code> nodes are root-only on this system. OpenGHub can install its udev
+        rule for you (your desktop asks for your password), or run these yourself and then unplug
+        and reconnect the device (or its receiver):
       </p>
       <pre>{UDEV_RULE}</pre>
       <div class="actions">
-        <button class="primary" onclick={copyCommands}>Copy commands</button>
+        <button class="primary" onclick={installRule} disabled={installing}>
+          {installing ? "Waiting for authentication…" : "Install device access"}
+        </button>
+        <button onclick={copyCommands}>Copy commands</button>
         <button onclick={onrescan}>Rescan</button>
       </div>
       <p class="aside">Showing demo devices until then.</p>

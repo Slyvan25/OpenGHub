@@ -33,6 +33,7 @@ import type {
   LightSyncStatus,
   DeviceSettings,
   ScriptStatus,
+  UdevRuleStatus,
 } from "./types";
 
 export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -73,6 +74,9 @@ export const events = {
 
 export const getConnectedDevices = (refresh = true) =>
   call<DeviceListPayload>("get_connected_devices", { refresh });
+export const getUdevRuleStatus = () => call<UdevRuleStatus>("get_udev_rule_status");
+/** Installs the udev rule through polkit; the desktop asks for the password. */
+export const installUdevRule = () => call<UdevRuleStatus>("install_udev_rule");
 
 export const getDeviceState = (deviceId: string) =>
   call<Device>("get_device_state", { deviceId });
