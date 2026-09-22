@@ -63,12 +63,17 @@ pub fn run() {
 
             build_tray(app)?;
             // "Start minimised to tray", and always when launched by the
-            // autostart entry: the window exists but stays hidden.
-            let minimised = autostart::started_minimized() || app.state::<Store>().get().settings.start_minimised;
-            if minimised {
+            // autostart entry: the window exists but stays hidden. Said out
+            // loud in the log, because an invisible window looks like a crash.
+            let by_autostart = autostart::started_minimized();
+            if by_autostart || app.state::<Store>().get().settings.start_minimised {
                 if let Some(w) = app.get_webview_window("main") {
                     let _ = w.hide();
                 }
+                log::info!(
+                    "starting minimised to the tray ({}); click the tray icon to open the window",
+                    if by_autostart { "--minimized" } else { "Settings → Start minimised to tray" }
+                );
             }
             apply_all_profiles(&handle);
             lightsync::spawn(handle.clone());

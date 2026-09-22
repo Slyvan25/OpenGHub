@@ -181,7 +181,10 @@ impl Profile {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
-    #[serde(default = "default_true")]
+    /// Off unless asked for: a window that never appears reads as a crash.
+    /// The autostart entry passes `--minimized` instead, so a login starts in
+    /// the tray whatever this says.
+    #[serde(default)]
     pub start_minimised: bool,
     #[serde(default = "default_true")]
     pub show_battery_notifications: bool,
