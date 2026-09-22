@@ -85,3 +85,13 @@ Nothing needs to be added for a device to work — names come from feature `0x00
 category from the device-type byte. `src-tauri/src/hidpp/registry.rs` only improves the
 fallback name and icon. Use **Settings → HID++ features** on the device page to dump what a
 new device exposes.
+
+## The splash screen
+
+`src/app.html` carries a small framework-free splash: inline CSS and an inline copy of
+`static/logo.svg`, so it paints with the first frame instead of the webview showing a black
+window until SvelteKit has booted. Two bars turn a full circle and resolve into the mark, which
+then breathes. `+layout.svelte` fades it out (`#splash.done`, then removes the node) as soon as
+the config, device and artwork stores have loaded — and it removes itself after ten seconds
+anyway, so a failure during boot can never leave the window covered. It honours
+`prefers-reduced-motion`.

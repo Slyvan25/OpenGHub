@@ -24,6 +24,17 @@
     !page.url.pathname.startsWith("/device/") && !/^\/community\/.+/.test(page.url.pathname),
   );
 
+  /**
+   * Fades out the splash from `app.html` — the markup that paints before
+   * SvelteKit has booted — once the stores hold real data.
+   */
+  function dismissSplash() {
+    const splash = document.getElementById("splash");
+    if (!splash) return;
+    splash.classList.add("done");
+    setTimeout(() => splash.remove(), 400);
+  }
+
   onMount(() => {
     ui.restore();
 
@@ -53,10 +64,14 @@
         unNav();
       };
       await Promise.all([configStore.load(), deviceStore.load(), artwork.load()]);
+      dismissSplash();
       if (!api.isTauri) {
         ui.toast("Running outside Tauri — showing mock devices.", "info", 6000);
       }
-    })().catch((e) => ui.toast(api.errorMessage(e), "error"));
+    })().catch((e) => {
+      dismissSplash();
+      ui.toast(api.errorMessage(e), "error");
+    });
 
     return () => unsubscribe?.();
   });

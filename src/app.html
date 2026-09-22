@@ -6,9 +6,117 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark" />
     <title>OpenGHub</title>
+    <style>
+      /* Splash screen. Inline and framework-free so it paints with the very
+         first frame — the webview would otherwise show a black window until
+         SvelteKit has booted. Two bars turn a half circle and settle into
+         OpenGHub's mark, in the spirit of G HUB's own loader; the mark then
+         breathes until the layout removes the splash (`#splash.done`). It
+         also takes itself away after 10 s, in case boot goes wrong. */
+      #splash {
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        display: grid;
+        place-items: center;
+        background: #000;
+        animation: splash-timeout 0s linear 10s forwards;
+      }
+
+      #splash.done {
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.35s ease;
+      }
+
+      #splash .stage {
+        position: relative;
+        width: 132px;
+        height: 132px;
+        animation: splash-turn 1s cubic-bezier(0.65, 0, 0.35, 1) forwards;
+      }
+
+      /* The two bars, at opposite corners of the mark. */
+      #splash .bar {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 26px;
+        height: 62px;
+        border-radius: 3px;
+        transform-origin: 50% 50%;
+        animation: splash-fade 0.35s ease 0.85s forwards;
+      }
+
+      #splash .bar.accent {
+        background: #1196ff;
+        transform: translate(-50%, -50%) translate(9px, -19px);
+      }
+
+      #splash .bar.white {
+        background: #fff;
+        transform: translate(-50%, -50%) translate(-9px, 19px);
+      }
+
+      /* The mark takes over where the bars left off, then breathes. */
+      #splash .mark {
+        position: absolute;
+        width: 108px;
+        height: 108px;
+        opacity: 0;
+        transform: scale(0.82);
+        animation:
+          splash-mark-in 0.45s cubic-bezier(0.34, 1.3, 0.64, 1) 0.8s forwards,
+          splash-breathe 1.9s ease-in-out 1.25s infinite;
+      }
+
+      @keyframes splash-turn {
+        to { transform: rotate(360deg); }
+      }
+
+      @keyframes splash-fade {
+        to { opacity: 0; }
+      }
+
+      @keyframes splash-mark-in {
+        to { opacity: 1; transform: scale(1); }
+      }
+
+      @keyframes splash-breathe {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.55; }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        #splash .stage,
+        #splash .bar,
+        #splash .mark {
+          animation-duration: 0.01s !important;
+          animation-iteration-count: 1 !important;
+        }
+
+        #splash .mark {
+          opacity: 1;
+          transform: none;
+        }
+      }
+    </style>
     %sveltekit.head%
   </head>
   <body data-sveltekit-preload-data="tap">
+    <div id="splash" aria-hidden="true">
+      <div class="stage">
+        <span class="bar accent"></span>
+        <span class="bar white"></span>
+        <svg class="mark" viewBox="0 0 132.49316 132.49316" xmlns="http://www.w3.org/2000/svg">
+        <g transform="translate(-39.986185,-66.472215)">
+        <circle cx="106.23277" cy="132.7188" r="57.700085" fill="#000" stroke="#000" stroke-width="17.093"/>
+        <path d="m 73.642012,190.55127 c 0,60.92807 44.800048,107.52012 103.936108,107.52012 59.13607,0 103.93612,-46.59205 103.93612,-107.52012 0,-60.92807 -44.80005,-107.520118 -103.93612,-107.520118 -59.13606,0 -103.936108,46.592048 -103.936108,107.520118 z m 17.920019,0 c 0,-49.57872 35.541369,-90.4961 86.016089,-90.4961 50.47473,0 86.0161,40.91738 86.0161,90.4961 0,49.57872 -35.54137,90.4961 -86.0161,90.4961 -50.47472,0 -86.016089,-40.91738 -86.016089,-90.4961 z" transform="matrix(0.3114053,0,0,0.3114053,50.284534,73.978262)" fill="#fff" stroke="#fff" stroke-width="50.2677"/>
+        <rect x="103.21607" y="88.835732" width="5.8889441" height="96.64341" fill="#000" stroke="#000" stroke-width="11.9144"/>
+        </g>
+        </svg>
+      </div>
+    </div>
     <div style="display: contents">%sveltekit.body%</div>
   </body>
 </html>
