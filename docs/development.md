@@ -90,8 +90,11 @@ new device exposes.
 
 `src/app.html` carries a small framework-free splash: inline CSS and an inline copy of
 `static/logo.svg`, so it paints with the first frame instead of the webview showing a black
-window until SvelteKit has booted. Two bars turn a full circle and resolve into the mark, which
-then breathes. `+layout.svelte` fades it out (`#splash.done`, then removes the node) as soon as
+window until SvelteKit has booted. Two bars turn and *deform* into the mark, which then breathes: the bars and the
+two halves of the ring are SVG paths with the same command structure (the bars use zero-radius
+arcs, which draw as straight lines), so a SMIL `<animate attributeName="d">` interpolates one
+into the other. The static `d` is the finished shape, so an engine without SMIL simply shows
+the mark. `+layout.svelte` fades it out (`#splash.done`, then removes the node) as soon as
 the config, device and artwork stores have loaded — and it removes itself after ten seconds
 anyway, so a failure during boot can never leave the window covered. It honours
 `prefers-reduced-motion`.
