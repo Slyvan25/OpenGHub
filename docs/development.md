@@ -24,8 +24,19 @@ Ubuntu 22.04 for every `v*` tag and publishes them on the GitHub release, togeth
 Arch PKGBUILD from `packaging/arch/`. The AppImage step downloads `linuxdeploy` at bundle time;
 if that fails on your machine, build the other two with `npm run tauri build -- --bundles deb,rpm`.
 
-To cut a release: bump `version` in `package.json`, `src-tauri/tauri.conf.json` and
-`src-tauri/Cargo.toml`, commit, then `git tag vX.Y.Z && git push --tags`.
+To cut a release, bump the version **before** tagging — the workflow refuses a tag that does
+not match the sources, because tauri-action publishes under the version in `tauri.conf.json`
+while the other steps follow the tag, and a mismatch yields a half-filled release:
+
+```sh
+scripts/bump-version.sh 0.1.1
+git commit -m "release: v0.1.1"
+git tag -a v0.1.1 -m "OpenGHub 0.1.1"
+git push origin master v0.1.1
+```
+
+Re-tagging a version that is already on GitHub needs the old one out of the way first
+(`git push origin :refs/tags/v0.1.1`), and the half-finished release deleted in the web UI.
 
 Note that plain `cargo build` produces a *dev* binary that expects the Vite dev server on port
 1420 — use `npm run tauri dev` or `npm run tauri build` instead.
