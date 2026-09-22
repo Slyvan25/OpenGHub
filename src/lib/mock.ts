@@ -306,6 +306,29 @@ export async function mockInvoke<T>(command: string, args: Record<string, unknow
     }
     case "install_udev_rule":
       throw "installing the udev rule needs the desktop app";
+    case "check_firmware":
+    case "refresh_firmware_catalog": {
+      const d = device(args.deviceId as string);
+      const installed = d.firmware?.[0]?.version ?? null;
+      const demoUpdate = d.id === "demo-g502";
+      return {
+        state: demoUpdate ? "updateAvailable" : "noPackage",
+        installed,
+        installedGhub: installed ? "17.00.8" : null,
+        package: demoUpdate
+          ? {
+              depot: "g502_wireless_dfu", version: "17.01.12", productIds: [0x407f, 0xc08d], bootloaderIds: [0xaaef],
+              startBlockers: ["BLOCKER_CONNECT_USB"], startWarnings: [], updateRequired: false,
+              releaseNotes: "<ul><li>Improved click debouncing algorithm</li><li>Fixes an issue with LIGHTSPEED reconnection after sleep</li></ul>",
+              image: "/mock/g502.dfu", imageSha256: "", imageSize: 45120,
+            }
+          : null,
+        blockers: demoUpdate && d.connection !== "wired" ? ["BLOCKER_CONNECT_USB"] : [],
+        catalogFetched: "2026-09-22",
+      } as T;
+    }
+    case "update_firmware":
+      throw "firmware updates need the desktop app";
     case "get_autostart":
       return mockAutostart as T;
     case "set_autostart":

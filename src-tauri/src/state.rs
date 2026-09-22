@@ -739,6 +739,77 @@ impl DeviceManager {
         })
     }
 
+    // -- firmware ---------------------------------------------------------------
+
+    /// Runs a firmware update end to end: bootloader, transfer, restart.
+    /// `report(stage, percent)` is called as it goes. The device's handle is
+    /// dropped for the duration; a rescan afterwards picks it up again.
+    pub fn update_firmware(
+        &self,
+        id: &str,
+        package: &crate::firmware::Package,
+        mut report: impl FnMut(&str, u8),
+    ) -> Result<()> {
+        use crate::firmware;
+        let image = std::fs::read(&package.image).map_err(|e| Error::other(format!("cannot read the firmware image: {e}")))?;
+        if !crate::depot::sha256_hex(&image).eq_ignore_ascii_case(&package.image_sha256) {
+            return Err(Error::other("the cached firmware image is corrupt (hash mismatch); check for updates again"));
+        }
+        let entity = firmware::image_entity(&image);
+
+        // 1. Into the bootloader. Devices already in it (a previous attempt)
+        //    are used as they are.
+        report("Restarting into the bootloader", 2);
+        let already_bootloader = {
+            let inner = self.inner.lock();
+            inner.snapshots.get(id).map(|s| package.bootloader_ids.contains(&s.product_id)).unwrap_or(false)
+        };
+        let mut needs_replug = false;
+        if !already_bootloader {
+            needs_replug = self.with_handle(id, firmware::enter_bootloader)?;
+            let mut inner = self.inner.lock();
+            inner.handles.remove(id);
+            inner.plans.remove(id);
+        }
+        if needs_replug {
+            report("Unplug the device and plug it back in", 4);
+        }
+
+        // 2. Wait for the bootloader to enumerate (it has its own product id).
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(if needs_replug { 120 } else { 30 });
+        let mut handle: Option<Handle> = None;
+        while std::time::Instant::now() < deadline {
+            let found = {
+                let mut inner = self.inner.lock();
+                let Some(api) = inner.api.as_mut() else { return Err(Error::other("hidapi is not available")) };
+                let _ = api.refresh_devices();
+                firmware::find_bootloader(api, &package.bootloader_ids).and_then(|ep| Handle::open(api, ep.address).ok())
+            };
+            if let Some(mut h) = found {
+                if h.ping().is_ok() && firmware::bootloader_ready(&mut h) {
+                    handle = Some(h);
+                    break;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+        let mut h = handle.ok_or_else(|| Error::other("the bootloader did not appear; the device may need to be unplugged and reconnected, then try again"))?;
+
+        // 3. The image, packet by packet.
+        report("Writing firmware", 5);
+        firmware::flash(&mut h, &image, |sent, total| {
+            let pct = 5 + (sent as u64 * 90 / total.max(1) as u64) as u8;
+            report("Writing firmware", pct);
+        })?;
+
+        // 4. Start it.
+        report("Restarting the device", 97);
+        firmware::restart(&mut h, entity)?;
+        drop(h);
+        std::thread::sleep(std::time::Duration::from_secs(4));
+        Ok(())
+    }
+
     pub fn set_wheel_leds(&self, id: &str, mask: u8) -> Result<()> {
         self.with_wheel(id, |w| w.set_leds(mask))
     }

@@ -31,6 +31,7 @@ kernel module, no proprietary daemon.
 | On-board memory mode (`0x8100`) | ✅ toggle per device; DPI ladder, report rate, lighting and button table written into the onboard profile |
 | Import from G HUB `settings.db` | ✅ profiles, DPI/shift, report rate, per-zone lighting, button assignments |
 | Lua scripting (G HUB API: `OnEvent`, `PressKey`, `OutputLogMessage`, …) | ✅ per profile, Lua 5.4 in-process; scripts written for G HUB load unchanged |
+| Firmware updates | ✅ catalogue from Logitech's public `*_dfu` depots, release notes, version check; ⚠️ flashing is fwupd's HID++ DFU sequence, not yet run on hardware here |
 
 ## Requirements
 
@@ -327,6 +328,29 @@ profile for editing but the device always receives the flattened sequence**. Lik
 *Action*, *Launch application* and *System* entries run on the host and are shown disabled;
 recorded keystrokes, typed ASCII text and delays are what a device can play. "Use standard
 delays" replaces the recorded timing with a fixed gap when the macro is flattened.
+
+### Firmware updates
+
+Logitech publishes firmware the same way it publishes artwork: as `*_dfu` depots on the public
+CDN, listed in the depository. Each holds a `dfu.json` (version, the USB interface ids it
+applies to — the bootloader's marked `force` — and start blockers such as *connect over USB*),
+release notes in twenty languages, and the `.dfu` image with its SHA-256. *Device settings →
+Firmware → Check for updates* fetches every such depot once (27 packages, ~3.5 MB; the Blue
+microphones and two keyboards use other containers and are skipped), caches them under the data
+directory, and matches connected devices by product id. The catalogue can only be as new as the
+imported depository, since `current.json` itself is not downloadable.
+
+An update runs the HID++ 2.0 DFU sequence fwupd's `logitech-hidpp` plugin uses: the device is
+sent into its bootloader with feature `0x00C2` (it reboots itself) or `0x00C1` (unplug and
+reconnect), the bootloader enumerates under its own product id and exposes feature `0x00D0`,
+and the `.dfu` image — which is literally the packet stream, 16-byte commands starting with
+`dfuStart` and the firmware's magic name — goes out as `dfuStart` then `dfuCmdData1..3,0` in a
+sliding window, each packet acknowledged with a status byte (busy statuses wait for the
+device's notification). `restart` ends it and the device comes back on the bus. A failed
+transfer leaves the device in its bootloader, from where the update can simply be run again.
+The confirmation dialog says so, and says that this path has not been exercised on every
+device family — the G502 LIGHTSPEED here has no package published, so it could not be run on
+this machine's hardware.
 
 ### Device settings
 

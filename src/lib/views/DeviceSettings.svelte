@@ -7,7 +7,7 @@
   import { configStore } from "$lib/stores/config.svelte";
   import { deviceStore } from "$lib/stores/devices.svelte";
   import { ui } from "$lib/stores/ui.svelte";
-  import type { Device, DeviceSettings, FeatureInfo, WheelSettings } from "$lib/types";
+  import type { Device, DeviceSettings, FeatureInfo, FirmwareCheck, FirmwareProgress, WheelSettings } from "$lib/types";
 
   interface Props {
     device: Device;
@@ -138,6 +138,69 @@
       ui.toast(api.errorMessage(e), "error");
     }
   }
+
+  // -- firmware updates -------------------------------------------------------
+  //
+  // Packages come from Logitech's public `*_dfu` depots (see firmware.rs).
+  // The check is cheap (cached catalogue); "Check for updates" refetches.
+  let fw = $state<FirmwareCheck | null>(null);
+  let fwChecking = $state(false);
+  let fwConfirm = $state(false);
+  let fwProgress = $state<FirmwareProgress | null>(null);
+
+  $effect(() => {
+    const id = device.id;
+    fw = null;
+    fwProgress = null;
+    api.checkFirmware(id).then((c) => (fw = c)).catch(() => (fw = null));
+  });
+
+  $effect(() => {
+    let off: (() => void) | undefined;
+    api.on<FirmwareProgress>(api.events.firmwareProgress, (p) => {
+      if (p.deviceId === device.id) fwProgress = p;
+    }).then((u) => (off = u));
+    return () => off?.();
+  });
+
+  async function checkFirmware() {
+    fwChecking = true;
+    try {
+      fw = await api.refreshFirmwareCatalog(device.id);
+      if (fw.state === "updateAvailable") ui.toast(`Firmware ${fw.package?.version} is available.`, "info", 4000);
+      else if (fw.state === "upToDate") ui.toast("Firmware is up to date.", "success", 3000);
+    } catch (e) {
+      ui.toast(api.errorMessage(e), "error", 7000);
+    } finally {
+      fwChecking = false;
+    }
+  }
+
+  async function runFirmwareUpdate() {
+    fwConfirm = false;
+    fwProgress = { deviceId: device.id, stage: "Starting", percent: 0, done: false, error: null };
+    try {
+      await api.updateFirmware(device.id);
+      ui.toast("Firmware updated.", "success", 5000);
+      fw = await api.checkFirmware(device.id).catch(() => fw);
+    } catch (e) {
+      ui.toast(`Firmware update failed: ${api.errorMessage(e)}`, "error", 10000);
+    }
+  }
+
+  /** Release notes are Logitech's HTML fragments; keep only list/paragraph tags. */
+  function safeNotes(html: string): string {
+    return html
+      .replace(/<!--[\s\S]*?-->/g, "")
+      .replace(/<(?!\/?(ul|ol|li|p|br|b|strong|i|em)\b)[^>]*>/gi, "")
+      .replace(/\son\w+="[^"]*"/gi, "");
+  }
+
+  const blockerText: Record<string, string> = {
+    BLOCKER_CONNECT_USB: "Connect the device with its USB cable to update.",
+    BLOCKER_DISCONNECT_BT: "Disconnect Bluetooth first.",
+    BLOCKER_LOW_BATTERY: "Charge the battery first.",
+  };
 </script>
 
 <div class="settings-scroll">
@@ -225,15 +288,53 @@
 
   {#if device.firmware?.length}
     <section class="card panel">
-      <h2 class="section-title">Firmware version</h2>
+      <h2 class="section-title">Firmware</h2>
       <dl class="facts">
-        {#each device.firmware as fw (fw.kind + fw.version)}
+        {#each device.firmware as f (f.kind + f.version)}
           <div>
-            <dt>{fw.kind}{fw.active ? " · active" : ""}</dt>
-            <dd>{fw.version}</dd>
+            <dt>{f.kind}{f.active ? " · active" : ""}</dt>
+            <dd>{f.version}</dd>
           </div>
         {/each}
       </dl>
+
+      {#if fwProgress && !fwProgress.done}
+        <div class="fw-progress">
+          <div class="bar"><div class="fill" style="width: {fwProgress.percent}%"></div></div>
+          <p class="none">{fwProgress.stage}… {fwProgress.percent}% — do not unplug the device.</p>
+        </div>
+      {:else if fw?.state === "updateAvailable" && fw.package}
+        <div class="fw-update">
+          <p class="fw-head"><Icon name="alert" size={15} /> Update available: <strong>{fw.package.version}</strong>
+            {#if fw.installedGhub}<span class="dim">(installed {fw.installedGhub})</span>{/if}
+          </p>
+          {#if fw.package.releaseNotes}
+            <div class="notes">{@html safeNotes(fw.package.releaseNotes)}</div>
+          {/if}
+          {#each fw.blockers as b (b)}
+            <p class="fw-block">{blockerText[b] ?? b}</p>
+          {/each}
+          <div class="fw-actions">
+            <button class="cal" onclick={() => (fwConfirm = true)} disabled={fw.blockers.length > 0}>Update firmware</button>
+            <button class="ghost" onclick={checkFirmware} disabled={fwChecking}>{fwChecking ? "Checking…" : "Check again"}</button>
+          </div>
+        </div>
+      {:else}
+        <div class="fw-actions">
+          <button class="ghost" onclick={checkFirmware} disabled={fwChecking}>
+            <Icon name="refresh" size={13} />
+            {fwChecking ? "Checking…" : "Check for updates"}
+          </button>
+          <span class="none">
+            {#if fw?.state === "upToDate"}Up to date{#if fw.package} ({fw.package.version}){/if}.
+            {:else if fw?.state === "unknown" && fw.package}A package ({fw.package.version}) exists but could not be compared with what is installed.
+            {:else if fw?.state === "noPackage"}No firmware package is published for this device{#if fw.catalogFetched} (catalogue from {fw.catalogFetched}){/if}.
+            {:else if fw === null}Firmware packages come from Logitech's public depots.
+            {/if}
+          </span>
+        </div>
+        {#if fwProgress?.error}<p class="fw-block">{fwProgress.error}</p>{/if}
+      {/if}
     </section>
   {/if}
 
@@ -408,6 +509,29 @@
 </div>
 </div>
 
+{#if fwConfirm && fw?.package}
+  <div class="scrim" role="presentation" onclick={(e) => e.target === e.currentTarget && (fwConfirm = false)}>
+    <div class="dialog" role="dialog" aria-modal="true">
+      <Icon name="alert" size={30} strokeWidth={1.5} />
+      <h3>Update {device.name} to firmware {fw.package.version}?</h3>
+      <p>
+        The device restarts into its bootloader, receives the new firmware over USB and restarts
+        again. It takes about a minute. <strong>Keep the device plugged in and do not close
+        OpenGHub.</strong> If the transfer is interrupted, the device stays in its bootloader and
+        the update can simply be run again.
+      </p>
+      <p>
+        This uses the same HID++ DFU sequence as fwupd. It has not been exercised on every
+        device family — if you have any doubt, wait for G HUB on another machine.
+      </p>
+      <div class="dialog-actions">
+        <button class="ghost" onclick={() => (fwConfirm = false)}>Cancel</button>
+        <button class="cal" onclick={runFirmwareUpdate}>Update</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
 {#if calStep !== "idle"}
   <div class="scrim" role="presentation" onclick={(e) => e.target === e.currentTarget && (calStep = "idle")}>
     <div class="dialog" role="dialog" aria-modal="true">
@@ -556,6 +680,69 @@
 
   .cal-error {
     color: var(--warning) !important;
+  }
+
+  .fw-update {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 14px;
+    padding: 12px 14px;
+    border: 1px solid rgba(17, 150, 255, 0.35);
+    border-radius: var(--radius);
+    background: var(--accent-soft);
+  }
+
+  .fw-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--text);
+  }
+
+  .fw-head .dim {
+    color: var(--text-dim);
+  }
+
+  .notes {
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-dim);
+  }
+
+  .notes :global(ul) {
+    margin: 0;
+    padding-left: 18px;
+  }
+
+  .fw-block {
+    font-size: 12px;
+    color: var(--warning);
+  }
+
+  .fw-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 12px;
+  }
+
+  .fw-progress {
+    margin-top: 14px;
+  }
+
+  .fw-progress .bar {
+    height: 6px;
+    border-radius: 3px;
+    background: var(--surface-3);
+    overflow: hidden;
+  }
+
+  .fw-progress .fill {
+    height: 100%;
+    background: var(--accent);
+    transition: width 0.2s;
   }
 
   .dialog-actions {

@@ -34,6 +34,8 @@ import type {
   DeviceSettings,
   ScriptStatus,
   UdevRuleStatus,
+  FirmwareCheck,
+  FirmwareInfo,
 } from "./types";
 
 export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -67,6 +69,7 @@ export const events = {
   activeApplication: "active-application",
   configChanged: "config-changed",
   navigate: "navigate",
+  firmwareProgress: "firmware-progress",
   artworkChanged: "artwork-changed",
   wheelState: "wheel-state",
 } as const;
@@ -78,6 +81,10 @@ export const getConnectedDevices = (refresh = true) =>
 export const getUdevRuleStatus = () => call<UdevRuleStatus>("get_udev_rule_status");
 /** Installs the udev rule through polkit; the desktop asks for the password. */
 export const installUdevRule = () => call<UdevRuleStatus>("install_udev_rule");
+export const checkFirmware = (deviceId: string) => call<FirmwareCheck>("check_firmware", { deviceId });
+export const refreshFirmwareCatalog = (deviceId: string) =>
+  call<FirmwareCheck>("refresh_firmware_catalog", { deviceId });
+export const updateFirmware = (deviceId: string) => call<FirmwareInfo[]>("update_firmware", { deviceId });
 export const getAutostart = () => call<boolean>("get_autostart");
 export const setAutostart = (on: boolean) => call<boolean>("set_autostart", { on });
 

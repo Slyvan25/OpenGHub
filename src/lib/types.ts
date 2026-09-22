@@ -336,6 +336,41 @@ export interface Settings {
   udevSetupDismissed?: boolean;
 }
 
+/** A firmware package from Logitech's `*_dfu` depots. */
+export interface FirmwarePackage {
+  depot: string;
+  version: string;
+  productIds: number[];
+  bootloaderIds: number[];
+  startBlockers: string[];
+  startWarnings: string[];
+  updateRequired: boolean;
+  /** HTML fragment (a `<ul>` of changes). */
+  releaseNotes: string;
+  image: string;
+  imageSha256: string;
+  imageSize: number;
+}
+
+export type FirmwareUpdateState = "noPackage" | "upToDate" | "updateAvailable" | "unknown";
+
+export interface FirmwareCheck {
+  state: FirmwareUpdateState;
+  installed: string | null;
+  installedGhub: string | null;
+  package: FirmwarePackage | null;
+  blockers: string[];
+  catalogFetched: string | null;
+}
+
+export interface FirmwareProgress {
+  deviceId: string;
+  stage: string;
+  percent: number;
+  done: boolean;
+  error: string | null;
+}
+
 /** State of the udev rule that grants access to Logitech devices and uinput. */
 export interface UdevRuleStatus {
   installed: boolean;

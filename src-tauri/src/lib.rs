@@ -7,6 +7,7 @@ pub mod commands;
 pub mod community;
 pub mod demo;
 pub mod depot;
+pub mod firmware;
 pub mod games;
 pub mod ghub_settings;
 pub mod keymap;
@@ -88,6 +89,9 @@ pub fn run() {
             commands::install_udev_rule,
             commands::get_autostart,
             commands::set_autostart,
+            commands::check_firmware,
+            commands::refresh_firmware_catalog,
+            commands::update_firmware,
             commands::get_device_state,
             commands::get_device_features,
             commands::set_device_dpi,

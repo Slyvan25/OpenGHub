@@ -81,6 +81,86 @@ pub async fn install_udev_rule(app: AppHandle, manager: State<'_, DeviceManager>
 }
 
 // ---------------------------------------------------------------------------
+// Firmware updates
+// ---------------------------------------------------------------------------
+
+/// Emitted while an update runs: `{ deviceId, stage, percent, done, error }`.
+pub const EVENT_FIRMWARE_PROGRESS: &str = "firmware-progress";
+
+/// What the catalogue has for a device, against what it runs.
+#[tauri::command]
+pub async fn check_firmware(manager: State<'_, DeviceManager>, device_id: String) -> Result<crate::firmware::FirmwareCheck> {
+    let snap = manager.snapshot(&device_id).ok_or(Error::NotConnected)?;
+    Ok(crate::firmware::check(&snap))
+}
+
+/// Downloads every firmware package the depository lists (cached after the
+/// first time) and returns the check for one device.
+#[tauri::command]
+pub async fn refresh_firmware_catalog(manager: State<'_, DeviceManager>, device_id: String) -> Result<crate::firmware::FirmwareCheck> {
+    tauri::async_runtime::spawn_blocking(crate::firmware::refresh_catalog)
+        .await
+        .map_err(|e| Error::other(e.to_string()))??;
+    let snap = manager.snapshot(&device_id).ok_or(Error::NotConnected)?;
+    Ok(crate::firmware::check(&snap))
+}
+
+/// Flashes the catalogued package onto the device, reporting progress as
+/// `firmware-progress` events, then rescans.
+#[tauri::command]
+pub async fn update_firmware(app: AppHandle, manager: State<'_, DeviceManager>, device_id: String) -> Result<Vec<crate::hidpp::features::FirmwareInfo>> {
+    let snap = manager.snapshot(&device_id).ok_or(Error::NotConnected)?;
+    let check = crate::firmware::check(&snap);
+    let package = check.package.clone().ok_or_else(|| Error::other("no firmware package for this device"))?;
+    if !check.blockers.is_empty() {
+        return Err(Error::other(match check.blockers[0].as_str() {
+            "BLOCKER_CONNECT_USB" => "connect the device with its USB cable first".to_string(),
+            other => format!("update blocked: {other}"),
+        }));
+    }
+    // Software features must let go of the device first.
+    app.state::<std::sync::Arc<crate::lightsync::LightSync>>().stop_all();
+
+    let app2 = app.clone();
+    let id = device_id.clone();
+    let manager_app = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let manager = manager_app.state::<DeviceManager>();
+        manager.update_firmware(&id, &package, |stage, percent| {
+            let _ = app2.emit(
+                EVENT_FIRMWARE_PROGRESS,
+                crate::firmware::Progress { device_id: id.clone(), stage: stage.into(), percent, done: false, error: None },
+            );
+        })
+    })
+    .await
+    .map_err(|e| Error::other(e.to_string()))?;
+
+    let devices = manager.refresh();
+    let payload = DeviceListPayload::build(&manager, devices);
+    let _ = app.emit(EVENT_DEVICES, &payload);
+    crate::refresh_tray_menu(&app);
+    crate::apply_all_profiles(&app);
+    match result {
+        Ok(()) => {
+            let fw = manager.snapshot(&device_id).map(|s| s.firmware).unwrap_or_default();
+            let _ = app.emit(
+                EVENT_FIRMWARE_PROGRESS,
+                crate::firmware::Progress { device_id, stage: "Done".into(), percent: 100, done: true, error: None },
+            );
+            Ok(fw)
+        }
+        Err(e) => {
+            let _ = app.emit(
+                EVENT_FIRMWARE_PROGRESS,
+                crate::firmware::Progress { device_id, stage: "Failed".into(), percent: 0, done: true, error: Some(e.to_string()) },
+            );
+            Err(e)
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Launch at startup
 // ---------------------------------------------------------------------------
 
