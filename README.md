@@ -28,9 +28,10 @@ Grab the package for your distribution from the [latest release](https://github.
 | Debian, Ubuntu, Mint, Pop!_OS | `OpenGHub_x.y.z_amd64.deb` | `sudo apt install ./OpenGHub_*_amd64.deb` |
 | Fedora, openSUSE, RHEL | `OpenGHub-x.y.z-1.x86_64.rpm` | `sudo dnf install ./OpenGHub-*.rpm` |
 | Arch, Manjaro, EndeavourOS | `PKGBUILD` | `makepkg -si` in a folder with the PKGBUILD (AUR: `openghub-bin`) |
+| Flatpak (any distribution) | `OpenGHub_x.y.z.flatpak` | `flatpak install --user OpenGHub_*.flatpak` |
 | Anything else | `OpenGHub_x.y.z_amd64.AppImage` | `chmod +x OpenGHub_*.AppImage && ./OpenGHub_*.AppImage` |
 
-The .deb and .rpm install the udev rule that lets you talk to the devices. The AppImage (or a build from source) offers to install it the first time you start the app — your desktop asks for your password once, nothing else to configure. Details in [docs/permissions.md](docs/permissions.md).
+The .deb and .rpm install the udev rule that lets you talk to the devices. The Flatpak, the AppImage and a build from source offer to install it the first time you start the app — your desktop asks for your password once, nothing else to configure. Details in [docs/permissions.md](docs/permissions.md).
 
 Optional, for the LIGHTSYNC software effects: `gstreamer1.0-tools` + `gstreamer1.0-pipewire` (screen sampler) and `pulseaudio-utils` (audio visualizer).
 

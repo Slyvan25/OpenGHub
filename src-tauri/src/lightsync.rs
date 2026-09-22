@@ -16,7 +16,7 @@
 use std::collections::HashMap;
 use std::io::Read;
 use std::os::fd::{AsRawFd, IntoRawFd};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -158,7 +158,7 @@ impl ScreenSource {
         let pipeline = format!(
             "pipewiresrc fd={inherited} path={node} do-timestamp=true ! videoconvert ! videoscale ! video/x-raw,format=RGB,width={THUMB_W},height={THUMB_H} ! videorate ! video/x-raw,framerate=20/1 ! fdsink fd=1 sync=false"
         );
-        let mut child = Command::new("gst-launch-1.0")
+        let mut child = crate::sandbox::host_command("gst-launch-1.0", &[inherited])
             .arg("-q")
             .args(pipeline.split(' '))
             .stdin(Stdio::null())
@@ -245,7 +245,7 @@ impl AudioSource {
     /// Records the default sink's monitor through `parec` (PulseAudio or
     /// PipeWire's compatibility layer).
     pub fn start() -> Result<Self> {
-        let mut child = Command::new("parec")
+        let mut child = crate::sandbox::host_command("parec", &[])
             .args([
                 "--device=@DEFAULT_MONITOR@",
                 "--raw",

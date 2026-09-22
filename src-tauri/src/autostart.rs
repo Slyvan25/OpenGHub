@@ -50,9 +50,14 @@ pub fn set_enabled(on: bool) -> Result<bool> {
         }
         return Ok(false);
     }
-    let exe = exec_path()?;
-    install_user_icon();
-    let contents = entry(&exe.to_string_lossy());
+    // A Flatpak is started by id; its icon is exported by Flatpak itself.
+    let contents = match crate::sandbox::launch_command() {
+        Some(cmd) => entry_with_exec(&cmd),
+        None => {
+            install_user_icon();
+            entry(&exec_path()?.to_string_lossy())
+        }
+    };
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| Error::other(format!("could not create {}: {e}", dir.display())))?;
     }
@@ -63,6 +68,12 @@ pub fn set_enabled(on: bool) -> Result<bool> {
 /// The `.desktop` text. `Exec` is quoted so a path with spaces survives.
 fn entry(exec: &str) -> String {
     let quoted = format!("\"{}\"", exec.replace('"', "\\\""));
+    entry_with_exec(&quoted)
+}
+
+/// `exec` verbatim — for `flatpak run <id>`, which must not be quoted as one word.
+fn entry_with_exec(exec: &str) -> String {
+    let quoted = exec;
     format!(
         "[Desktop Entry]\n\
          Type=Application\n\

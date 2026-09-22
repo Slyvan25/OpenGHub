@@ -14,6 +14,7 @@ pub mod keymap;
 pub mod lightsync;
 pub mod permissions;
 pub mod remap;
+pub mod sandbox;
 pub mod scripting;
 pub mod hidpp;
 pub mod profiles;

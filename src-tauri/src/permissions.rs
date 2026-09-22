@@ -9,7 +9,6 @@
 //! systemd's `73-seat-late.rules` to apply the ACL).
 
 use std::path::Path;
-use std::process::Command;
 
 use serde::Serialize;
 
@@ -47,7 +46,7 @@ pub fn status() -> UdevRuleStatus {
         installed: found.is_some(),
         current: found.as_ref().map(|(_, s)| normalise(s) == normalise(RULE)).unwrap_or(false),
         stale: Path::new(STALE_RULE_PATH).exists(),
-        can_install: which("pkexec"),
+        can_install: crate::sandbox::host_has("pkexec"),
         path: found.as_ref().map(|(p, _)| p.to_string()).unwrap_or_else(|| RULE_PATH.into()),
     }
 }
@@ -56,23 +55,25 @@ pub fn status() -> UdevRuleStatus {
 /// drop the stale one, reload udev and re-trigger the nodes so the ACL is
 /// applied to devices that are already plugged in.
 pub fn install() -> Result<UdevRuleStatus> {
-    if !which("pkexec") {
+    if !crate::sandbox::host_has("pkexec") {
         return Err(Error::other("pkexec (polkit) is not available; install the rule by hand — see the README"));
     }
-    let tmp = std::env::temp_dir().join(format!("openghub-udev-{}.rules", std::process::id()));
-    std::fs::write(&tmp, RULE).map_err(|e| Error::other(format!("could not write {}: {e}", tmp.display())))?;
+    // The rule travels inline, base64-encoded: no temp file, so this works
+    // from inside a Flatpak sandbox (whose /tmp the host cannot see) too.
+    let encoded = base64_encode(RULE.as_bytes());
     let script = format!(
-        "install -m 0644 '{src}' '{dst}' && rm -f '{stale}' && udevadm control --reload-rules && \
+        "printf '%s' '{encoded}' | base64 -d > '{dst}' && chmod 0644 '{dst}' && rm -f '{stale}' && \
+         udevadm control --reload-rules && \
          udevadm trigger --action=add --subsystem-match=hidraw && \
          udevadm trigger --action=add --subsystem-match=misc --attr-match=name=uinput; \
          true",
-        src = tmp.display(),
         dst = RULE_PATH,
         stale = STALE_RULE_PATH,
     );
-    let out = Command::new("pkexec").args(["sh", "-c", &script]).output();
-    let _ = std::fs::remove_file(&tmp);
-    let out = out.map_err(|e| Error::other(format!("could not run pkexec: {e}")))?;
+    let out = crate::sandbox::host_command("pkexec", &[])
+        .args(["sh", "-c", &script])
+        .output()
+        .map_err(|e| Error::other(format!("could not run pkexec: {e}")))?;
     match out.status.code() {
         Some(0) => {}
         // polkit: 126 = the user dismissed the dialog, 127 = not authorised.
@@ -84,20 +85,28 @@ pub fn install() -> Result<UdevRuleStatus> {
         }
     }
     let s = status();
-    if !s.current {
+    if !s.current && !crate::sandbox::in_flatpak() {
         return Err(Error::other("the rule was written but does not read back as expected"));
     }
     Ok(s)
 }
 
-fn normalise(s: &str) -> String {
-    s.lines().map(str::trim_end).filter(|l| !l.is_empty()).collect::<Vec<_>>().join("\n")
+fn base64_encode(data: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+    for chunk in data.chunks(3) {
+        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let n = (b[0] as u32) << 16 | (b[1] as u32) << 8 | b[2] as u32;
+        out.push(T[(n >> 18) as usize & 63] as char);
+        out.push(T[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 { T[(n >> 6) as usize & 63] as char } else { '=' });
+        out.push(if chunk.len() > 2 { T[n as usize & 63] as char } else { '=' });
+    }
+    out
 }
 
-fn which(bin: &str) -> bool {
-    std::env::var_os("PATH")
-        .map(|p| std::env::split_paths(&p).any(|d| d.join(bin).is_file()))
-        .unwrap_or(false)
+fn normalise(s: &str) -> String {
+    s.lines().map(str::trim_end).filter(|l| !l.is_empty()).collect::<Vec<_>>().join("\n")
 }
 
 #[cfg(test)]
@@ -109,6 +118,14 @@ mod tests {
         assert!(RULE.contains(r#"KERNEL=="hidraw*""#));
         assert!(RULE.contains(r#"KERNEL=="uinput""#));
         assert!(RULE_PATH.ends_with("/70-openghub.rules"));
+    }
+
+    #[test]
+    fn base64_matches_the_standard() {
+        assert_eq!(base64_encode(b"Man"), "TWFu");
+        assert_eq!(base64_encode(b"Ma"), "TWE=");
+        assert_eq!(base64_encode(b"M"), "TQ==");
+        assert_eq!(base64_encode(b""), "");
     }
 
     #[test]

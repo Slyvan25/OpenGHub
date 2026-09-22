@@ -69,6 +69,7 @@ jobs:
             - Debian / Ubuntu / Mint / Pop!_OS: `sudo apt install ./OpenGHub_*_amd64.deb`
             - Fedora / openSUSE / RHEL: `sudo dnf install ./OpenGHub-*.rpm`
             - Arch / Manjaro / EndeavourOS: `makepkg -si` with the attached PKGBUILD (AUR: `openghub-bin`)
+            - Flatpak: `flatpak install --user OpenGHub_*.flatpak` (needs the GNOME 47 runtime from Flathub)
             - Anything else: `chmod +x OpenGHub_*.AppImage && ./OpenGHub_*.AppImage`
 
             The .deb and .rpm install the udev rule; the AppImage offers to install it on first launch.
@@ -81,3 +82,42 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "v${{ steps.meta.outputs.version }}" dist/PKGBUILD dist/openghub-bin.install --clobber
+
+  flatpak:
+    name: Flatpak bundle
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version from the tag
+        id: meta
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+
+      - name: flatpak-builder and the GNOME runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y --noninteractive flathub org.gnome.Platform//47 org.gnome.Sdk//47
+
+      - name: The release .deb
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="${{ steps.meta.outputs.version }}"
+          gh release download "v$v" --pattern "OpenGHub_*_amd64.deb" --dir packaging/flatpak
+          sed -i "s/OpenGHub_0.1.0_amd64.deb/OpenGHub_${v}_amd64.deb/" packaging/flatpak/com.openghub.app.yml
+          sed -i "s/version=\"0.1.0\" date=\"[0-9-]*\"/version=\"${v}\" date=\"$(date +%F)\"/" packaging/flatpak/com.openghub.app.metainfo.xml
+
+      - name: Build and bundle
+        run: |
+          v="${{ steps.meta.outputs.version }}"
+          flatpak-builder --user --force-clean --repo=repo build-dir packaging/flatpak/com.openghub.app.yml
+          flatpak build-bundle repo "OpenGHub_${v}.flatpak" com.openghub.app
+
+      - name: Attach the bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "v${{ steps.meta.outputs.version }}" "OpenGHub_${{ steps.meta.outputs.version }}.flatpak" --clobber

@@ -365,7 +365,7 @@ pub fn lock_screen() {
         &["dbus-send", "--session", "--dest=org.freedesktop.ScreenSaver", "/ScreenSaver", "org.freedesktop.ScreenSaver.Lock"],
     ];
     for cmd in attempts {
-        if std::process::Command::new(cmd[0]).args(&cmd[1..]).status().map(|s| s.success()).unwrap_or(false) {
+        if crate::sandbox::host_command(cmd[0], &[]).args(&cmd[1..]).status().map(|s| s.success()).unwrap_or(false) {
             return;
         }
     }

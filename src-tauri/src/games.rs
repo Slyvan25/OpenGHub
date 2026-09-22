@@ -538,20 +538,19 @@ fn parse_lutris_time(s: &str) -> u64 {
 
 fn lutris_command() -> Option<Command> {
     if which("lutris") {
-        return Some(Command::new("lutris"));
+        return Some(crate::sandbox::host_command("lutris", &[]));
     }
     if which("flatpak") {
-        let mut c = Command::new("flatpak");
+        let mut c = crate::sandbox::host_command("flatpak", &[]);
         c.args(["run", "net.lutris.Lutris"]);
         return Some(c);
     }
     None
 }
 
+/// On the host when sandboxed: the launchers live there, not in the Flatpak.
 fn which(bin: &str) -> bool {
-    std::env::var_os("PATH")
-        .map(|p| std::env::split_paths(&p).any(|d| d.join(bin).is_file()))
-        .unwrap_or(false)
+    crate::sandbox::host_has(bin)
 }
 
 pub fn scan_lutris() -> Vec<Game> {
@@ -703,7 +702,7 @@ fn spawn_detached(mut cmd: Command) -> Result<()> {
 /// Opens a URL with the desktop's handler; the launchers register their own
 /// schemes (`steam://`, `heroic://`, `lutris:`).
 fn open_url(url: &str) -> Result<()> {
-    let mut cmd = Command::new("xdg-open");
+    let mut cmd = crate::sandbox::host_command("xdg-open", &[]);
     cmd.arg(url);
     spawn_detached(cmd)
 }
@@ -719,7 +718,7 @@ pub fn launch(game_id: &str, manual: &[ManualGame]) -> Result<()> {
                 return Err(Error::other("malformed Steam app id"));
             }
             if which("steam") {
-                let mut cmd = Command::new("steam");
+                let mut cmd = crate::sandbox::host_command("steam", &[]);
                 cmd.arg(format!("steam://rungameid/{key}"));
                 spawn_detached(cmd)
             } else {
@@ -738,7 +737,7 @@ pub fn launch(game_id: &str, manual: &[ManualGame]) -> Result<()> {
                 .iter()
                 .find(|m| m.id == key)
                 .ok_or_else(|| Error::other("unknown game"))?;
-            let mut cmd = Command::new(&m.exec);
+            let mut cmd = crate::sandbox::host_command(&m.exec, &[]);
             if !m.args.is_empty() {
                 cmd.args(m.args.split_whitespace());
             }
