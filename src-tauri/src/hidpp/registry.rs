@@ -93,7 +93,7 @@ pub static KNOWN_DEVICES: &[KnownDevice] = &[
     dev(0xc090, "G203 LIGHTSYNC", DeviceKind::Mouse),
     dev(0xc092, "G102 LIGHTSYNC", DeviceKind::Mouse),
     dev(0xc094, "PRO X SUPERLIGHT", DeviceKind::Mouse),
-    dev(0xc095, "PRO X SUPERLIGHT", DeviceKind::Mouse),
+    dev(0xc095, "G502 X PLUS", DeviceKind::Mouse),
     dev(0xc097, "G502 X", DeviceKind::Mouse),
     dev(0xc098, "G502 X LIGHTSPEED", DeviceKind::Mouse),
     dev(0xc09b, "PRO X SUPERLIGHT 2", DeviceKind::Mouse),
@@ -103,6 +103,7 @@ pub static KNOWN_DEVICES: &[KnownDevice] = &[
     dev(0x4082, "MX MASTER 3", DeviceKind::Mouse),
     dev(0x4086, "G903 LIGHTSPEED", DeviceKind::Mouse),
     dev(0x4093, "PRO X SUPERLIGHT", DeviceKind::Mouse),
+    dev(0x4099, "G502 X PLUS", DeviceKind::Mouse),
 
     // ---- Keyboards -------------------------------------------------------
     dev(0xc32b, "G910 ORION SPARK", DeviceKind::Keyboard),
@@ -112,6 +113,7 @@ pub static KNOWN_DEVICES: &[KnownDevice] = &[
     dev(0xc336, "G213 PRODIGY", DeviceKind::Keyboard),
     dev(0xc339, "PRO MECHANICAL", DeviceKind::Keyboard),
     dev(0xc33c, "G512 CARBON", DeviceKind::Keyboard),
+    dev(0xc33e, "G915 LIGHTSPEED", DeviceKind::Keyboard),
     dev(0xc33f, "G815 LIGHTSYNC", DeviceKind::Keyboard),
     dev(0xc343, "PRO X TKL", DeviceKind::Keyboard),
     dev(0xc545, "G915 TKL", DeviceKind::Keyboard),

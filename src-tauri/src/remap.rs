@@ -74,13 +74,13 @@ impl Action {
                 }
                 Button::Key { modifiers, usage: key.unwrap_or(0) }
             }
-            Action::DpiUp => Button::Special { action: 0x03 },
-            Action::DpiDown => Button::Special { action: 0x04 },
-            Action::DpiCycle => Button::Special { action: 0x05 },
-            Action::DpiDefault => Button::Special { action: 0x06 },
-            Action::DpiShift => Button::Special { action: 0x07 },
-            Action::ProfileNext => Button::Special { action: 0x0a },
-            Action::GShift => Button::Special { action: 0x0b },
+            Action::DpiUp => Button::special(0x03),
+            Action::DpiDown => Button::special(0x04),
+            Action::DpiCycle => Button::special(0x05),
+            Action::DpiDefault => Button::special(0x06),
+            Action::DpiShift => Button::special(0x07),
+            Action::ProfileNext => Button::special(0x0a),
+            Action::GShift => Button::special(0x0b),
             Action::Macro(_) => {
                 let (sector, offset) = macro_slot?;
                 Button::Macro { sector, offset }
@@ -89,6 +89,31 @@ impl Action {
             Action::Disabled => Button::Disabled,
         })
     }
+}
+
+/// Which M-key state (1-3) an assignment belongs to. G HUB keeps a set of
+/// G-key bindings per M1/M2/M3; OpenGHub stores M2 and M3 as `button-1:m2`,
+/// `button-1:m3`, and anything without a suffix is M1.
+pub fn m_state(control: &str) -> u8 {
+    control
+        .split(':')
+        .find_map(|part| match part {
+            "m2" => Some(2),
+            "m3" => Some(3),
+            _ => None,
+        })
+        .unwrap_or(1)
+}
+
+/// The plan for G-keys in one M-state: that state's bindings, and F1..Fn for
+/// every key nothing is bound to — what the keys type on their own.
+pub fn gkey_plan(assignments: &[Assignment], macros: &[MacroDef], count: u8, state: u8) -> Plan {
+    let chosen: Vec<Assignment> = assignments.iter().filter(|a| m_state(&a.control) == state).cloned().collect();
+    let mut plan = Plan::build(&chosen, macros, 0);
+    for i in 0..count.min(12) {
+        plan.actions.entry(i).or_insert(Action::Keys(vec![crate::keymap::KEY_F1 + i as u16]));
+    }
+    plan
 }
 
 /// Physical button index (0-based) for an assignment's control id.
@@ -378,6 +403,22 @@ mod tests {
 
     fn a(control: &str, category: &str, value: &str) -> Assignment {
         Assignment { control: control.into(), category: category.into(), label: String::new(), value: value.into() }
+    }
+
+    #[test]
+    fn m_states_keep_their_own_gkey_bindings() {
+        assert_eq!(m_state("button-1"), 1);
+        assert_eq!(m_state("button-1:m2"), 2);
+        assert_eq!(m_state("button-3:m3:gshift"), 3);
+        let set = [a("button-1", "system", "XF86AudioLowerVolume"), a("button-1:m2", "key", "a")];
+        let m1 = gkey_plan(&set, &[], 5, 1);
+        let m2 = gkey_plan(&set, &[], 5, 2);
+        let m3 = gkey_plan(&set, &[], 5, 3);
+        assert_eq!(m1.actions[&0], Action::Keys(vec![crate::keymap::KEY_VOLUMEDOWN]));
+        assert_ne!(m2.actions[&0], m1.actions[&0]);
+        // Unbound keys type F1..F5, in every state.
+        assert_eq!(m3.actions[&0], Action::Keys(vec![crate::keymap::KEY_F1]));
+        assert_eq!(m1.actions[&4], Action::Keys(vec![crate::keymap::KEY_F1 + 4]));
     }
 
     #[test]

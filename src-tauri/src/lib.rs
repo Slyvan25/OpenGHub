@@ -91,6 +91,7 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            commands::frontend_log,
             commands::get_connected_devices,
             commands::get_udev_rule_status,
             commands::install_udev_rule,

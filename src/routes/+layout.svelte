@@ -35,6 +35,8 @@
     setTimeout(() => splash.remove(), 400);
   }
 
+  api.installErrorForwarding();
+
   onMount(() => {
     ui.restore();
 

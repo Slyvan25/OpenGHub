@@ -12,7 +12,7 @@ use crate::hidpp::registry::{self, DeviceKind};
 use crate::profiles::{Assignment, MacroDef};
 use crate::remap::{self, Action, Plan};
 use crate::wheel::{self, WheelHandle, WheelSettings, WheelState};
-use crate::hidpp::{self, DeviceAddress, Error, Handle, Result, RECEIVER_CHILD_INDICES};
+use crate::hidpp::{self, DeviceAddress, Error, Handle, ReportKind, Result, RECEIVER_CHILD_INDICES};
 
 /// How the device is attached, which is what the card's status row shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -124,6 +124,7 @@ impl DeviceSnapshot {
                 vendor_id: crate::hidpp::LOGITECH_VID,
                 product_id: handle.model.product_id,
                 device_index: hidpp::DEVICE_INDEX_WIRED,
+                port: None,
             },
             hid_product.unwrap_or_else(|| handle.model.name.to_string()),
             DeviceKind::Wheel,
@@ -203,10 +204,21 @@ struct Inner {
     /// index for the mice that report through the spy.
     plans: HashMap<String, Plan>,
     spy_index: HashMap<String, u8>,
+    /// Keyboards whose G-keys report through `0x8010` in software mode, with
+    /// that feature's index. Needed in host mode, which RGB on a G915 is:
+    /// there the keys do nothing unless the host acts on them.
+    gkey_index: HashMap<String, u8>,
+    /// Per keyboard: the 0x8020 index, the G-key count, the current M-state
+    /// (1-3) and the bindings to rebuild its plan from when M1-M3 is pressed.
+    mkeys: HashMap<String, MKeys>,
     /// Fingerprint of what was last written to each device's onboard button
     /// table, so profile switches and restarts do not rewrite flash needlessly.
     onboard_written: HashMap<String, u64>,
     snapshots: HashMap<String, DeviceSnapshot>,
+    /// Address id (`046d:c547:1@3-6`) → the device's own id. A device keeps
+    /// one id however it is connected, so its profile follows it from cable
+    /// to receiver the way G HUB's does.
+    aliases: HashMap<String, String>,
     order: Vec<String>,
     /// True when we are showing synthetic devices because no real ones were found.
     demo: bool,
@@ -238,6 +250,9 @@ impl DeviceManager {
                 spy_index: HashMap::new(),
                 onboard_written: HashMap::new(),
                 snapshots: HashMap::new(),
+                aliases: HashMap::new(),
+                gkey_index: HashMap::new(),
+                mkeys: HashMap::new(),
                 order: Vec::new(),
                 demo: false,
                 empty_reason: init_error
@@ -487,6 +502,11 @@ impl DeviceManager {
     ) -> Result<AssignmentReport> {
         let mut inner = self.inner.lock();
         let mut report = AssignmentReport::default();
+        let all_assignments = assignments;
+        // M2/M3 bindings only exist in software; the plan and the onboard
+        // table below see the M1 set.
+        let m1: Vec<Assignment> = assignments.iter().filter(|a| remap::m_state(&a.control) == 1).cloned().collect();
+        let assignments = &m1[..];
         if inner.demo {
             return Ok(report);
         }
@@ -504,6 +524,37 @@ impl DeviceManager {
             let idx = if spy { h.feature_index(features::button_spy::ID).ok() } else { None };
             Ok((spy, onboard, idx))
         })?;
+
+        // G-keys (G915, G815): divert them to the host and act on them here,
+        // with F1..Fn for any key nothing is assigned to — what they type
+        // on their own.
+        let state = inner.mkeys.get(id).map(|m| m.state).unwrap_or(1);
+        let gkeys = inner.with_handle(id, |h| {
+            if !h.supports(features::gkeys::ID) {
+                return Ok(None);
+            }
+            let idx = h.feature_index(features::gkeys::ID)?;
+            let count = h.call(idx, features::gkeys::FN_GET_COUNT, &[], ReportKind::Long)?.param(0);
+            h.call(idx, features::gkeys::FN_SOFTWARE_CONTROL, &[0x01], ReportKind::Long)?;
+            let midx = h.feature_index(features::mkeys::ID).ok();
+            if let Some(m) = midx {
+                let _ = h.call(m, features::mkeys::FN_SET_LEDS, &[1 << (state - 1)], ReportKind::Long);
+            }
+            Ok(Some((idx, count, midx)))
+        });
+        match gkeys {
+            Ok(Some((idx, count, midx))) => {
+                report.software = true;
+                inner.gkey_index.insert(id.to_string(), idx);
+                inner.plans.insert(id.to_string(), remap::gkey_plan(all_assignments, macros, count, state));
+                inner.mkeys.insert(
+                    id.to_string(),
+                    MKeys { index: midx, count, state, assignments: all_assignments.to_vec(), macros: macros.to_vec() },
+                );
+            }
+            Ok(None) => {}
+            Err(e) => log::warn!("{id}: G-keys not taken over: {e}"),
+        }
 
         let onboard_chosen = inner.snapshots.get(id).and_then(|s| s.onboard_mode).unwrap_or(false);
         if spy && !onboard_chosen {
@@ -536,11 +587,16 @@ impl DeviceManager {
             serde_json::to_string(macros).unwrap_or_default().hash(&mut h);
             h.finish()
         };
-        if onboard && inner.onboard_written.get(id) == Some(&fingerprint) {
+        // With nothing assigned there is nothing to write: the device's own
+        // table is left as it is. Rewriting it from `factory_buttons` on every
+        // start wore the flash and, where that guess was wrong, broke keys.
+        let nothing_assigned = assignments.is_empty();
+        if onboard && (nothing_assigned || inner.onboard_written.get(id) == Some(&fingerprint)) {
             report.onboard = true;
         } else if onboard {
             use crate::hidpp::onboard;
             let product_id = inner.snapshots.get(id).map(|s| s.product_id).unwrap_or(0);
+            let is_mouse = inner.snapshots.get(id).map(|s| s.kind == DeviceKind::Mouse).unwrap_or(false);
             let result = inner.with_handle(id, |h| {
                 let info = onboard::read_info(h)?;
                 let size = info.sector_size as usize;
@@ -600,9 +656,10 @@ impl DeviceManager {
                         buttons.push((i as u8, true, onboard::Button::Disabled));
                     }
                 }
-                // Same guard as the software plan: something must be the left click.
+                // Same guard as the software plan: something must be the left
+                // click. Mice only — on a keyboard button 0 is G1, not a click.
                 let has_primary = buttons.iter().any(|(_, sh, b)| !sh && matches!(b, onboard::Button::Mouse { mask: 1 }));
-                if !has_primary && count > 0 {
+                if is_mouse && !has_primary && count > 0 {
                     buttons.retain(|(i, sh, _)| *sh || *i != 0);
                     macro_assignments.retain(|m| m.shifted || m.button != 0);
                     buttons.push((0, false, onboard::Button::Mouse { mask: 1 }));
@@ -632,6 +689,48 @@ impl DeviceManager {
                     w.poll();
                 }
                 Some(crate::wheel::ghub_mask(&w.state.lock()))
+            } else if let Some(gidx) = inner.gkey_index.get(&id).copied() {
+                let events = match inner.handles.get_mut(&id) {
+                    Some(h) => h.poll_events(),
+                    None => continue,
+                };
+                // M1-M3 switch the G-key bindings, as in G HUB, and light
+                // their own LED.
+                let mut new_state = None;
+                if let Some(mk) = inner.mkeys.get(&id) {
+                    for ev in &events {
+                        if Some(ev.feature_index) == mk.index && ev.function_id() == 0 && ev.param(0) & 0x07 != 0 {
+                            new_state = Some(ev.param(0).trailing_zeros() as u8 + 1);
+                        }
+                    }
+                }
+                if let Some(state) = new_state {
+                    if let Some(mk) = inner.mkeys.get_mut(&id) {
+                        mk.state = state;
+                        let plan = remap::gkey_plan(&mk.assignments, &mk.macros, mk.count, state);
+                        let midx = mk.index;
+                        inner.plans.insert(id.clone(), plan);
+                        if let Some(m) = midx {
+                            let _ = inner.with_handle(&id, |h| {
+                                h.call(m, features::mkeys::FN_SET_LEDS, &[1 << (state - 1)], ReportKind::Long).map(|_| ())
+                            });
+                        }
+                        log::info!("{id}: M{state}");
+                    }
+                }
+                let plan = inner.plans.get_mut(&id).expect("plan");
+                for ev in events {
+                    // `[mask_lo, mask_hi]`, bit 0 = G1.
+                    if ev.feature_index != gidx || ev.function_id() != 0 {
+                        continue;
+                    }
+                    let mask = u16::from_le_bytes([ev.param(0), ev.param(1)]) as u32;
+                    for (button, pressed) in plan.transitions(mask) {
+                        let action = plan.resolve(button, pressed);
+                        out.push(ButtonEvent { device_id: id.clone(), button, pressed, action, wheel: false });
+                    }
+                }
+                None
             } else if let Some(spy) = inner.spy_index.get(&id).copied() {
                 let events = match inner.handles.get_mut(&id) {
                     Some(h) => h.poll_events(),
@@ -696,6 +795,9 @@ impl DeviceManager {
                     let _ = features::set_spy(h, false);
                     let _ = features::write_remapping(h, &table);
                 }
+                if let Ok(idx) = h.feature_index(features::gkeys::ID) {
+                    let _ = h.call(idx, features::gkeys::FN_SOFTWARE_CONTROL, &[0x00], ReportKind::Long);
+                }
                 if h.supports(features::onboard::ID) {
                     let _ = features::write_onboard_mode(h, features::onboard::MODE_ONBOARD);
                 }
@@ -703,6 +805,7 @@ impl DeviceManager {
             });
         }
         inner.plans.clear();
+        inner.gkey_index.clear();
     }
 
     // -- wheels ---------------------------------------------------------------
@@ -1045,47 +1148,72 @@ impl Inner {
                 vec![hidpp::DEVICE_INDEX_WIRED]
             };
 
+            // Two receivers of one model: tell their children apart by port.
+            let twin = endpoint.is_receiver
+                && endpoints.iter().filter(|e| e.is_receiver && e.address.product_id == endpoint.address.product_id).count() > 1;
+            let port = if twin { hidpp::usb_port(&endpoint.address.path) } else { None };
+
             for index in indices {
                 let mut address = endpoint.address.clone();
                 address.device_index = index;
-                let id = address.id();
+                address.port = port.clone();
+                let address_id = address.id();
 
-                let handle = match self.handles.entry(id.clone()) {
-                    std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
-                    std::collections::hash_map::Entry::Vacant(e) => {
-                        match Handle::open(api, address.clone()) {
-                            Ok(h) => e.insert(h),
-                            Err(err) => {
-                                log::debug!("cannot open {}: {err}", address.path);
-                                let label = endpoint
-                                    .hid_product
-                                    .clone()
-                                    .or_else(|| {
-                                        registry::name_for(address.product_id).map(str::to_owned)
-                                    })
-                                    .unwrap_or_else(|| format!("{:04x}", address.product_id));
-                                if !unopenable.contains(&label) {
-                                    unopenable.push(label);
-                                }
-                                continue;
-                            }
+                // Known connection: reuse its handle under the device's id.
+                if let Some(id) = self.aliases.get(&address_id).cloned().filter(|id| self.handles.contains_key(id)) {
+                    let handle = self.handles.get_mut(&id).expect("checked");
+                    if handle.address.id() != address_id || handle.ping().is_err() {
+                        if handle.address.id() == address_id {
+                            self.handles.remove(&id);
                         }
+                        self.aliases.remove(&address_id);
+                        continue;
+                    }
+                    let mut snapshot = self
+                        .snapshots
+                        .remove(&id)
+                        .unwrap_or_else(|| DeviceSnapshot::placeholder(&address, String::new(), DeviceKind::Other));
+                    probe(handle, &mut snapshot, endpoint);
+                    snapshot.id = id.clone();
+                    self.snapshots.insert(id.clone(), snapshot);
+                    seen.push(id);
+                    continue;
+                }
+
+                let mut handle = match Handle::open(api, address.clone()) {
+                    Ok(h) => h,
+                    Err(err) => {
+                        log::debug!("cannot open {}: {err}", address.path);
+                        let label = endpoint
+                            .hid_product
+                            .clone()
+                            .or_else(|| registry::name_for(address.product_id).map(str::to_owned))
+                            .unwrap_or_else(|| format!("{:04x}", address.product_id));
+                        if !unopenable.contains(&label) {
+                            unopenable.push(label);
+                        }
+                        continue;
                     }
                 };
 
                 // A receiver slot with nothing paired into it never answers.
                 if handle.ping().is_err() {
-                    self.handles.remove(&id);
                     continue;
                 }
 
-                let mut snapshot = self
-                    .snapshots
-                    .remove(&id)
-                    .unwrap_or_else(|| DeviceSnapshot::placeholder(&address, String::new(), DeviceKind::Other));
-
-                let handle = self.handles.get_mut(&id).expect("just inserted");
-                probe(handle, &mut snapshot, endpoint);
+                let mut snapshot = DeviceSnapshot::placeholder(&address, String::new(), DeviceKind::Other);
+                probe(&mut handle, &mut snapshot, endpoint);
+                let id = device_identity(&snapshot)
+                    .filter(|id| !seen.contains(id))
+                    .unwrap_or_else(|| address_id.clone());
+                if let Some(old) = self.snapshots.remove(&id) {
+                    // Same device, new connection: keep what is not re-read.
+                    snapshot.onboard_mode = snapshot.onboard_mode.or(old.onboard_mode);
+                }
+                snapshot.id = id.clone();
+                self.aliases.retain(|_, v| *v != id);
+                self.aliases.insert(address_id, id.clone());
+                self.handles.insert(id.clone(), handle);
                 self.snapshots.insert(id.clone(), snapshot);
                 seen.push(id);
             }
@@ -1127,8 +1255,10 @@ impl Inner {
         self.wheels.retain(|id, _| seen.contains(id));
         self.plans.retain(|id, _| seen.contains(id));
         self.spy_index.retain(|id, _| seen.contains(id));
+        self.gkey_index.retain(|id, _| seen.contains(id));
         self.onboard_written.retain(|id, _| seen.contains(id));
         self.snapshots.retain(|id, _| seen.contains(id));
+        self.aliases.retain(|_, id| seen.contains(id));
         self.order = seen;
 
         if self.order.is_empty() {
@@ -1162,8 +1292,20 @@ impl Inner {
     }
 
     fn with_handle<T>(&mut self, id: &str, f: impl FnOnce(&mut Handle) -> Result<T>) -> Result<T> {
-        let handle = self.handles.get_mut(id).ok_or(Error::NotConnected)?;
-        let result = f(handle);
+        let result = match self.handles.get_mut(id) {
+            Some(handle) => f(handle),
+            None => Err(Error::NotConnected),
+        };
+        // Moved between cable and receiver: the old path is gone ("no such
+        // device") or answers "busy" for the device that left it. Find the
+        // device again — its id does not change — so the next call reaches it.
+        if matches!(&result, Err(e) if connection_lost(e)) {
+            log::info!("{id}: connection changed, rescanning");
+            self.handles.remove(id);
+            self.aliases.retain(|_, v| v != id);
+            self.refresh();
+            return result;
+        }
         if let Err(Error::NotConnected) = result {
             self.handles.remove(id);
             if let Some(snap) = self.snapshots.get_mut(id) {
@@ -1286,6 +1428,23 @@ pub fn write_backup(backup: &crate::hidpp::onboard::MemoryBackup) -> Result<std:
         .ok_or_else(|| Error::other("could not resolve the data directory"))?;
     std::fs::create_dir_all(&dir)
         .map_err(|e| Error::other(format!("could not create {}: {e}", dir.display())))?;
+    // Identical to the newest backup of this product: nothing new to keep.
+    let prefix = format!("{:04x}-", backup.product_id);
+    let newest = std::fs::read_dir(&dir).ok().and_then(|rd| {
+        rd.flatten()
+            .map(|e| e.path())
+            .filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with(&prefix)))
+            .max()
+    });
+    if let Some(path) = newest {
+        let same = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|t| serde_json::from_str::<crate::hidpp::onboard::MemoryBackup>(&t).ok())
+            .is_some_and(|old| old.sectors == backup.sectors);
+        if same {
+            return Ok(path);
+        }
+    }
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -1319,6 +1478,28 @@ fn wheel_evdev_nodes(hidraw_path: &str) -> Vec<String> {
         }
     }
     out
+}
+
+/// A keyboard's M-key state; see `Inner::mkeys`.
+struct MKeys {
+    index: Option<u8>,
+    count: u8,
+    state: u8,
+    assignments: Vec<Assignment>,
+    macros: Vec<MacroDef>,
+}
+
+/// Errors that mean the handle no longer reaches the device.
+pub fn connection_lost(e: &Error) -> bool {
+    matches!(e, Error::NotConnected | Error::Hid(_))
+        || matches!(e, Error::Protocol(p) if p.0 == hidpp::ProtocolError::BUSY)
+}
+
+/// A connection-independent id: the device's own highest model id (its wired
+/// product id — `c095` for a G502 X PLUS, `c33e` for a G915), in the form a
+/// wired connection always had, so existing profiles keep working.
+fn device_identity(snapshot: &DeviceSnapshot) -> Option<String> {
+    snapshot.model_ids.iter().max().map(|pid| format!("046d:{pid:04x}:255"))
 }
 
 fn probe(handle: &mut Handle, snapshot: &mut DeviceSnapshot, endpoint: &hidpp::Endpoint) {

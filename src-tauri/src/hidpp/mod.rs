@@ -104,6 +104,10 @@ impl ProtocolError {
     pub const fn is_invalid_argument(self) -> bool {
         self.0 == Self::INVALID_ARGUMENT
     }
+
+    /// The device is still working on the previous request.
+    pub const BUSY: u8 = 0x08;
+
 }
 
 impl std::fmt::Display for ProtocolError {
@@ -288,14 +292,33 @@ pub struct DeviceAddress {
     pub product_id: u16,
     /// `0xff` when talking straight to the device, `1..=6` behind a receiver.
     pub device_index: u8,
+    /// USB port (`1-1`, `3-6`), set only when two receivers of the same model
+    /// are attached: their children would otherwise share `046d:c547:1`.
+    pub port: Option<String>,
 }
 
 impl DeviceAddress {
     /// Stable identifier handed to the frontend. Paths can change across replug,
     /// so we key on PID + index and keep the path as a reopen hint.
     pub fn id(&self) -> String {
-        format!("{:04x}:{:04x}:{}", self.vendor_id, self.product_id, self.device_index)
+        let base = format!("{:04x}:{:04x}:{}", self.vendor_id, self.product_id, self.device_index);
+        match &self.port {
+            Some(port) => format!("{base}@{port}"),
+            None => base,
+        }
     }
+}
+
+/// The USB port a hidraw node hangs off, e.g. `1-1` for
+/// `/sys/…/usb1/1-1/1-1:1.2/0003:046D:C547.0004`: the path component right
+/// before the interface (`1-1:1.2`). Stable for as long as the device stays
+/// in the same socket.
+pub fn usb_port(hidraw_path: &str) -> Option<String> {
+    let node = std::path::Path::new(hidraw_path).file_name()?.to_str()?;
+    let real = std::fs::canonicalize(format!("/sys/class/hidraw/{node}/device")).ok()?;
+    let parts: Vec<&str> = real.iter().filter_map(|c| c.to_str()).collect();
+    let iface = parts.iter().position(|c| c.contains(':') && c.contains('.') && c.contains('-'))?;
+    parts.get(iface.checked_sub(1)?).map(|s| s.to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -428,13 +451,19 @@ impl Handle {
         params: &[u8],
         kind: ReportKind,
     ) -> Result<Packet> {
-        self.exchange(Packet::request(
-            kind,
-            self.address.device_index,
-            feature_index,
-            function_id,
-            params,
-        ))
+        let request = Packet::request(kind, self.address.device_index, feature_index, function_id, params);
+        // A G915 answers "busy" while it commits the previous lighting change;
+        // the same request goes through a moment later.
+        let mut attempt = 0;
+        loop {
+            match self.exchange(request.clone()) {
+                Err(Error::Protocol(ProtocolError(ProtocolError::BUSY))) if attempt < 20 => {
+                    attempt += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(25));
+                }
+                other => return other,
+            }
+        }
     }
 
     /// Resolves the feature id then calls it. The common path.
@@ -459,10 +488,10 @@ impl Handle {
         // Drop anything stale that arrived since the last call.
         self.drain();
 
+        // A failed write means the node is gone. The message is localised
+        // ("Enheten finns inte" on a Swedish system), so it is not matched.
         self.device.write(&bytes).map_err(|e| match e {
-            HidError::HidApiError { message } if message.contains("No such device") => {
-                Error::NotConnected
-            }
+            HidError::HidApiError { .. } => Error::NotConnected,
             other => Error::Hid(other),
         })?;
 
@@ -598,6 +627,7 @@ pub fn enumerate(api: &HidApi) -> Vec<Endpoint> {
                 vendor_id: info.vendor_id(),
                 product_id: pid,
                 device_index: DEVICE_INDEX_WIRED,
+                port: None,
             },
             hid_product: info.product_string().map(str::to_owned),
             serial: info.serial_number().map(str::to_owned),
