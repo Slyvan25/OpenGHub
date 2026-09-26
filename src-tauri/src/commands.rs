@@ -175,6 +175,17 @@ pub async fn set_autostart(on: bool) -> Result<bool> {
     crate::autostart::set_enabled(on)
 }
 
+/// Mirrors frontend errors into the backend log, so a bug report from the
+/// packaged app (which has no reachable devtools) carries the actual failure.
+#[tauri::command]
+pub fn frontend_log(level: String, message: String) {
+    match level.as_str() {
+        "error" => log::error!(target: "frontend", "{message}"),
+        "warn" => log::warn!(target: "frontend", "{message}"),
+        _ => log::info!(target: "frontend", "{message}"),
+    }
+}
+
 /// Rescans the bus and returns everything we can talk to.
 #[tauri::command]
 pub async fn get_connected_devices(
@@ -392,7 +403,16 @@ pub async fn set_device_lighting(
         },
         other => return Err(Error::other(format!("unknown lighting effect '{other}'"))),
     };
-    if manager.snapshot(&request.device_id).and_then(|s| s.onboard_mode) == Some(true) && request.persist {
+    // 0x8071 devices take live RGB writes even in onboard mode, so they never
+    // need the onboard LED table — which is flash, rewritten on every colour
+    // picker drag.
+    let rgb_effects = manager
+        .with_handle(&request.device_id, |h| Ok(h.supports(crate::hidpp::features::lighting::ID_RGB_EFFECTS)))
+        .unwrap_or(false);
+    if !rgb_effects
+        && manager.snapshot(&request.device_id).and_then(|s| s.onboard_mode) == Some(true)
+        && request.persist
+    {
         // Onboard mode: 0x8070 writes are ignored, the profile's LED table is
         // what the device shows.
         let zones: Vec<u8> = if request.zone == all_zones() {
@@ -403,7 +423,15 @@ pub async fn set_device_lighting(
         let entries: Vec<(u8, [u8; 3], LightEffect)> = zones.into_iter().map(|z| (z, rgb, effect)).collect();
         return manager.write_onboard_lighting(&request.device_id, &entries);
     }
-    manager.set_lighting(&request.device_id, request.zone, rgb, effect, request.persist)
+    let mut result = manager.set_lighting(&request.device_id, request.zone, rgb, effect, request.persist);
+    // The failed call has already rescanned; a colour is safe to send twice.
+    if matches!(&result, Err(e) if crate::state::connection_lost(e)) {
+        result = manager.set_lighting(&request.device_id, request.zone, rgb, effect, request.persist);
+    }
+    if let Err(e) = &result {
+        log::warn!("{}: lighting zone {} not applied: {e}", request.device_id, request.zone);
+    }
+    result
 }
 
 /// Switches a device in or out of on-board memory mode and remembers it.

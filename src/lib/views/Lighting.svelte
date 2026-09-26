@@ -165,7 +165,28 @@
     }
   }
 
+  /**
+   * Colour drags fire faster than a keyboard commits a change (it answers
+   * "busy"), so writes run one at a time and only the newest waiting one is
+   * sent: each zone has at most one write in flight and one queued.
+   */
+  const inFlight = new Set<number>();
+  const queued = new Set<number>();
   async function apply(zoneIndex: number) {
+    if (inFlight.has(zoneIndex)) {
+      queued.add(zoneIndex);
+      return;
+    }
+    inFlight.add(zoneIndex);
+    try {
+      await applyNow(zoneIndex);
+    } finally {
+      inFlight.delete(zoneIndex);
+      if (queued.delete(zoneIndex)) void apply(zoneIndex);
+    }
+  }
+
+  async function applyNow(zoneIndex: number) {
     const settings = byZone[String(zoneIndex)];
     if (!settings) return;
     applying = true;

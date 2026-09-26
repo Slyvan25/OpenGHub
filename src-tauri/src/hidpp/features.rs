@@ -175,6 +175,28 @@ pub mod button_spy {
 }
 
 // ---------------------------------------------------------------------------
+// 0x8010 GKeys
+// ---------------------------------------------------------------------------
+pub mod gkeys {
+    pub const ID: u16 = 0x8010;
+    pub const FN_GET_COUNT: u8 = 0x00;
+    /// `[1]` diverts the G-keys: they stop typing and report
+    /// `[mask_lo, mask_hi]` (bit 0 = G1) through function 0 instead. `[0]`
+    /// gives them back.
+    pub const FN_SOFTWARE_CONTROL: u8 = 0x02;
+}
+
+// ---------------------------------------------------------------------------
+// 0x8020 MKeys
+// ---------------------------------------------------------------------------
+pub mod mkeys {
+    pub const ID: u16 = 0x8020;
+    /// `[led_mask]`, bit 0 = M1. Presses arrive through function 0 as
+    /// `[mask]` while the G-keys are in software control.
+    pub const FN_SET_LEDS: u8 = 0x01;
+}
+
+// ---------------------------------------------------------------------------
 // 0x8070 ColorLedEffects / 0x8071 RGBEffects
 // ---------------------------------------------------------------------------
 pub mod lighting {
@@ -185,10 +207,27 @@ pub mod lighting {
     pub const FN_SET_ZONE_EFFECT: u8 = 0x03;
     pub const FN_GET_ZONE_EFFECT: u8 = 0x0e;
 
+    /// 0x8071 answers device, zone and effect queries through one `getInfo`
+    /// function: `[zone | 0xff, effect | 0xff, 0]`. Its zone reply carries the
+    /// location one byte later than 0x8070's (`[zone, 0, loc_be, count]`).
     pub const ID_RGB_EFFECTS: u16 = 0x8071;
     pub const FN_RGB_GET_INFO: u8 = 0x00;
-    pub const FN_RGB_SET_EFFECT: u8 = 0x03;
-    pub const FN_RGB_SET_CONTROL_MODE: u8 = 0x05;
+    pub const FN_RGB_SET_CLUSTER_EFFECT: u8 = 0x01;
+    pub const FN_RGB_SW_CONTROL: u8 = 0x05;
+    /// `manageSwControl` set: `[1, flags, events]`. Flags `0x03` hands both
+    /// the RGB and the power management to the host. The events byte matters
+    /// over LIGHTSPEED: a G502 X keeps its own effect with `0x07` and obeys
+    /// with `0x05` (OpenRGB's generic value), while a G915 only obeys with
+    /// `0x07` (OpenRGB's G915 value). Wired, both accept either.
+    pub const SW_CONTROL_SET_MOUSE: [u8; 3] = [0x01, 0x03, 0x05];
+    pub const SW_CONTROL_SET_KEYBOARD: [u8; 3] = [0x01, 0x03, 0x07];
+    /// `rgbPowerMode` (fn 8): `[0]` reads, `[1, mode]` sets. With power
+    /// management handed over, a wireless G915 sat in mode 2 and showed only
+    /// its logo; mode 1 lights everything.
+    pub const FN_RGB_POWER_MODE: u8 = 0x08;
+    pub const POWER_MODE_ON: u8 = 0x01;
+    /// 0x8040 BrightnessControl, which G915-class keyboards have.
+    pub const ID_BRIGHTNESS: u16 = 0x8040;
 
     /// Effect ids, as reported by `getZoneEffectInfo`. Note breathing is `0x0a`,
     /// not `0x02` — the ids are not contiguous.
@@ -648,10 +687,59 @@ fn with_host_mode<T>(
     }
 }
 
-/// Number of addressable lighting zones, via `0x8070` `getInfo`.
+/// Which lighting feature a device speaks. Newer devices (G502 X, G915)
+/// have only `0x8071`; older ones only `0x8070`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LightingApi {
+    ColorLed(u8),
+    Rgb(u8),
+}
+
+fn lighting_api(h: &mut Handle) -> Result<LightingApi> {
+    if h.supports(lighting::ID_COLOR_LED_EFFECTS) {
+        Ok(LightingApi::ColorLed(h.feature_index(lighting::ID_COLOR_LED_EFFECTS)?))
+    } else {
+        Ok(LightingApi::Rgb(h.feature_index(lighting::ID_RGB_EFFECTS)?))
+    }
+}
+
+/// `(location, effect count)` for one zone.
+fn zone_info(h: &mut Handle, api: LightingApi, zone: u8) -> Result<(u16, u8)> {
+    match api {
+        LightingApi::ColorLed(idx) => {
+            let info = h.call(idx, lighting::FN_GET_ZONE_INFO, &[zone], ReportKind::Long)?;
+            Ok((info.param_u16(1), info.param(3)))
+        }
+        LightingApi::Rgb(idx) => {
+            let info = h.call(idx, lighting::FN_RGB_GET_INFO, &[zone, 0xff, 0x00], ReportKind::Long)?;
+            Ok((info.param_u16(2), info.param(4)))
+        }
+    }
+}
+
+/// Effect id at a zone-local effect index. Both features put it at byte 3.
+fn effect_id(h: &mut Handle, api: LightingApi, zone: u8, effect: u8) -> Result<u8> {
+    let reply = match api {
+        LightingApi::ColorLed(idx) => {
+            h.call(idx, lighting::FN_GET_ZONE_EFFECT_INFO, &[zone, effect], ReportKind::Long)?
+        }
+        LightingApi::Rgb(idx) => {
+            h.call(idx, lighting::FN_RGB_GET_INFO, &[zone, effect, 0x00], ReportKind::Long)?
+        }
+    };
+    Ok(reply.param(3))
+}
+
+/// Number of addressable lighting zones, via `getInfo` of 0x8070 or 0x8071.
 pub fn lighting_zone_count(h: &mut Handle) -> Result<u8> {
-    let idx = h.feature_index(lighting::ID_COLOR_LED_EFFECTS)?;
-    Ok(h.call(idx, lighting::FN_GET_INFO, &[0xff, 0x00, 0x00], ReportKind::Long)?.param(0))
+    match lighting_api(h)? {
+        LightingApi::ColorLed(idx) => {
+            Ok(h.call(idx, lighting::FN_GET_INFO, &[0xff, 0x00, 0x00], ReportKind::Long)?.param(0))
+        }
+        LightingApi::Rgb(idx) => {
+            Ok(h.call(idx, lighting::FN_RGB_GET_INFO, &[0xff, 0xff, 0x00], ReportKind::Long)?.param(2))
+        }
+    }
 }
 
 /// What `getZoneInfo` reports about one lighting zone.
@@ -688,20 +776,16 @@ pub fn zone_location_name(location: u16) -> &'static str {
 
 /// Full description of every lighting zone on the device.
 pub fn read_zones(h: &mut Handle) -> Result<Vec<ZoneInfo>> {
-    let idx = h.feature_index(lighting::ID_COLOR_LED_EFFECTS)?;
+    let api = lighting_api(h)?;
     let count = lighting_zone_count(h)?;
 
     let mut zones = Vec::with_capacity(count as usize);
     for index in 0..count {
-        let info = h.call(idx, lighting::FN_GET_ZONE_INFO, &[index], ReportKind::Long)?;
-        let location = info.param_u16(1);
-        let effect_count = info.param(3);
+        let (location, effect_count) = zone_info(h, api, index)?;
 
         let mut effects = Vec::with_capacity(effect_count as usize);
         for effect in 0..effect_count.min(16) {
-            let reply =
-                h.call(idx, lighting::FN_GET_ZONE_EFFECT_INFO, &[index, effect], ReportKind::Long)?;
-            effects.push(reply.param(3));
+            effects.push(effect_id(h, api, index, effect)?);
         }
 
         zones.push(ZoneInfo {
@@ -720,16 +804,13 @@ pub fn read_zones(h: &mut Handle) -> Result<Vec<ZoneInfo>> {
 /// `0x00`, `0x01`, `0x03`, `0x0a`) and sending an unsupported one is rejected
 /// with "invalid argument".
 pub fn zone_effects(h: &mut Handle, zone: u8) -> Result<Vec<u8>> {
-    let idx = h.feature_index(lighting::ID_COLOR_LED_EFFECTS)?;
-    let info = h.call(idx, lighting::FN_GET_ZONE_INFO, &[zone], ReportKind::Long)?;
-    let count = info.param(3);
+    let api = lighting_api(h)?;
+    let (_, count) = zone_info(h, api, zone)?;
 
     let mut effects = Vec::with_capacity(count as usize);
     for effect in 0..count.min(16) {
-        let reply =
-            h.call(idx, lighting::FN_GET_ZONE_EFFECT_INFO, &[zone, effect], ReportKind::Long)?;
         // The id is a big-endian u16, but every value in use fits in a byte.
-        effects.push(reply.param(3));
+        effects.push(effect_id(h, api, zone, effect)?);
     }
     Ok(effects)
 }
@@ -762,11 +843,12 @@ pub fn write_lighting(
     effect: LightEffect,
     persist: bool,
 ) -> Result<()> {
-    let idx = h.feature_index(lighting::ID_COLOR_LED_EFFECTS)?;
+    let api = lighting_api(h)?;
 
     // A device running its onboard profile owns its own LEDs: 0x8070 writes are
     // accepted and then ignored. G HUB switches to host mode for the same
-    // reason. Devices without 0x8100 simply skip this.
+    // reason. Devices without 0x8100 simply skip this. The same holds for
+    // 0x8071: a G915 in onboard mode acknowledges every write and shows none.
     if h.supports(onboard::ID) {
         match read_onboard_mode(h) {
             Ok(onboard::MODE_HOST) => {}
@@ -776,6 +858,35 @@ pub fn write_lighting(
                 }
             }
             Err(e) => log::debug!("could not read onboard mode: {e}"),
+        }
+    }
+
+    // 0x8071 devices additionally need the LEDs handed to the host, or they
+    // keep running their own effect whatever is written.
+    if let LightingApi::Rgb(idx) = api {
+        // Keyboards are told apart by their brightness feature.
+        let keyboard = h.supports(lighting::ID_BRIGHTNESS);
+        let set = if keyboard { lighting::SW_CONTROL_SET_KEYBOARD } else { lighting::SW_CONTROL_SET_MOUSE };
+        if let Err(e) = h.call(idx, lighting::FN_RGB_SW_CONTROL, &set, ReportKind::Long) {
+            log::warn!("could not take software control of the LEDs: {e}");
+        }
+        match h.call(idx, lighting::FN_RGB_POWER_MODE, &[0x00], ReportKind::Long) {
+            Ok(p) if p.param(1) != lighting::POWER_MODE_ON => {
+                if let Err(e) = h.call(idx, lighting::FN_RGB_POWER_MODE, &[0x01, lighting::POWER_MODE_ON], ReportKind::Long) {
+                    log::warn!("could not wake the LEDs: {e}");
+                }
+            }
+            _ => {}
+        }
+        // A brightness of 0 makes every colour black. Wireless G915s come up
+        // like that once the host owns power management.
+        if keyboard && !matches!(effect, LightEffect::Off) {
+            if let Ok(bi) = h.feature_index(lighting::ID_BRIGHTNESS) {
+                if matches!(h.call(bi, 0x01, &[], ReportKind::Long), Ok(p) if p.param_u16(0) == 0) {
+                    let max = h.call(bi, 0x00, &[], ReportKind::Long).map(|p| p.param_u16(0)).unwrap_or(100).max(1);
+                    let _ = h.call(bi, 0x02, &max.to_be_bytes(), ReportKind::Long);
+                }
+            }
         }
     }
 
@@ -810,7 +921,21 @@ pub fn write_lighting(
         params[12] =
             if persist { lighting::PERSIST_RAM_AND_FLASH } else { lighting::PERSIST_RAM };
 
-        h.call(idx, lighting::FN_SET_ZONE_EFFECT, &params, ReportKind::Long)?;
+        match api {
+            LightingApi::ColorLed(idx) => {
+                h.call(idx, lighting::FN_SET_ZONE_EFFECT, &params, ReportKind::Long)?;
+            }
+            // Same payload layout, but a trailing 0 is acknowledged and not
+            // shown (verified on a G502 X PLUS and a G915), so it is always 1
+            // — as OpenRGB sends it. A fixed colour also wants ramp byte 0x02.
+            LightingApi::Rgb(idx) => {
+                params[12] = lighting::PERSIST_RAM_AND_FLASH;
+                if effect_id == lighting::EFFECT_FIXED {
+                    params[5] = 0x02;
+                }
+                h.call(idx, lighting::FN_RGB_SET_CLUSTER_EFFECT, &params, ReportKind::Long)?;
+            }
+        }
     }
     Ok(())
 }

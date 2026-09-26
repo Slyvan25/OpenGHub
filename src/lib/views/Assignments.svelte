@@ -103,8 +103,38 @@
     "pedal-accelerator": { dot: { x: 0.8, y: 0.4 }, label: { x: 1.06, y: 0.3 }, side: "right" },
   };
 
+  /**
+   * Models whose controls differ from the category default. `button-N` is
+   * index N-1 of the device's onboard button table, read off the real
+   * devices: a G502 X has its tilts at 7-8 and DPI up/down behind them, and a
+   * G915's table is G1-G5 followed by M1-M3 (which are not assignable).
+   */
+  const G502X: Control[] = [
+    { id: "button-1", label: "Left click", fallback: "Primary Click" },
+    { id: "button-2", label: "Right click", fallback: "Secondary Click" },
+    { id: "button-3", label: "Middle click", fallback: "Middle Click" },
+    { id: "button-4", label: "G4", fallback: "Back" },
+    { id: "button-5", label: "G6", fallback: "DPI Shift" },
+    { id: "button-6", label: "G5", fallback: "Forward" },
+    { id: "button-7", label: "Scroll left", fallback: "Scroll Left" },
+    { id: "button-8", label: "Scroll right", fallback: "Scroll Right" },
+    { id: "button-9", label: "G9", fallback: "Profile Cycle" },
+    { id: "button-10", label: "G8", fallback: "DPI Up" },
+    { id: "button-11", label: "G7", fallback: "DPI Down" },
+  ];
+  const G915: Control[] = Array.from({ length: 5 }, (_, i) => ({
+    id: `button-${i + 1}`,
+    label: `G${i + 1}`,
+    fallback: `F${i + 1}`,
+  }));
+  const MODEL_CONTROLS: Record<number, Control[]> = {
+    0xc095: G502X, 0x4099: G502X, 0xc098: G502X, 0xc097: G502X,
+    0xc33e: G915, 0x407c: G915, 0xc33f: G915,
+  };
+
   const controls = $derived(
-    device.kind === "keyboard" ? keyboardControls : device.kind === "wheel" ? wheelControls : mouseControls,
+    artworkIds(device).map((id) => MODEL_CONTROLS[id]).find(Boolean) ??
+      (device.kind === "keyboard" ? keyboardControls : device.kind === "wheel" ? wheelControls : mouseControls),
   );
 
   interface Command {
@@ -258,9 +288,17 @@
       .filter((group) => group.items.length > 0),
   );
 
+  /**
+   * G HUB's M1/M2/M3 on keyboards with M-keys: each keeps its own G-key
+   * bindings, stored as `button-1:m2` / `button-1:m3` (M1 has no suffix).
+   */
+  const hasMKeys = $derived(controls === G915);
+  let mstate = $state<1 | 2 | 3>(1);
+
   /** Control id as stored for the current layer. */
   function keyFor(controlId: string): string {
-    return layer === "gshift" ? `${controlId}:gshift` : controlId;
+    const m = hasMKeys && mstate > 1 ? `:m${mstate}` : "";
+    return layer === "gshift" ? `${controlId}${m}:gshift` : `${controlId}${m}`;
   }
 
   function assignmentFor(controlId: string): Assignment | undefined {
@@ -694,6 +732,14 @@
           {/each}
         </div>
       {/if}
+      {#if hasMKeys}
+        <div class="views" role="group" aria-label="M-key state">
+          {#each [1, 2, 3] as const as m (m)}
+            <button class="view-pill" class:active={mstate === m} onclick={() => (mstate = m)}>M{m}</button>
+          {/each}
+        </div>
+      {/if}
+      {#if !hasMKeys}
       <div class="layers">
         <span class:on={layer === "default"}>Default</span>
         <button
@@ -706,6 +752,7 @@
         ></button>
         <span class:on={layer === "gshift"}>G-Shift</span>
       </div>
+      {/if}
     </div>
   {/snippet}
 

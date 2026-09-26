@@ -51,6 +51,23 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
   return invoke<T>(command, args);
 }
 
+/**
+ * Forwards uncaught frontend errors to the backend log. The packaged app has
+ * no devtools, so without this a crashed page leaves no trace anywhere.
+ */
+export function installErrorForwarding() {
+  if (!isTauri) return;
+  const send = (level: string, message: string) =>
+    call("frontend_log", { level, message }).catch(() => {});
+  window.addEventListener("error", (e) =>
+    send("error", `${e.message} at ${e.filename}:${e.lineno}:${e.colno}\n${e.error?.stack ?? ""}`),
+  );
+  window.addEventListener("unhandledrejection", (e) => {
+    const r = e.reason;
+    send("error", `unhandled rejection: ${r?.stack ?? r?.message ?? String(r)}`);
+  });
+}
+
 /** Subscribes to a backend event; resolves to an unsubscribe function. */
 export async function on<T>(event: string, handler: (payload: T) => void): Promise<() => void> {
   if (!isTauri) {

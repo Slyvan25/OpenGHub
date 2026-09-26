@@ -34,7 +34,7 @@ fn main() {
                     for (i, b) in p.buttons.iter().enumerate() {
                         let text = match b {
                             Button::Mouse { mask } => format!("mouse button {}", mask.trailing_zeros() + 1),
-                            Button::Special { action } => format!("special action {action}"),
+                            Button::Special { action, param } => format!("special action {action} ({:02x} {:02x})", param[0], param[1]),
                             Button::Macro { sector, offset } => format!("macro @ sector {sector} +{offset}"),
                             Button::Key { modifiers, usage } => format!("key usage {usage:#04x} modifiers {modifiers:#04x}"),
                             Button::Consumer { usage } => format!("consumer usage {usage:#06x}"),
