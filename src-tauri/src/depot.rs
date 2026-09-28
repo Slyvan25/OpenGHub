@@ -136,6 +136,12 @@ impl Depository {
     pub fn depot(&self, name: &str) -> Option<&DepotEntry> {
         self.depots.iter().find(|d| d.name == name)
     }
+
+    /// A device's depot by name or, for newer builds, by prefix.
+    pub fn depot_for(&self, depot: &str) -> Option<&DepotEntry> {
+        let name = resolve_depot_name(self.depots.iter().map(|d| d.name.as_str()), depot)?;
+        self.depot(&name)
+    }
 }
 
 fn string_or_number<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u64, D::Error> {
@@ -188,6 +194,11 @@ pub struct DeviceDef {
     /// `ZONE_PRIMARY` → `PRIMARY`, `ZONE_BRANDING` → `LOGO`.
     #[serde(default)]
     pub zone_type_map: HashMap<String, String>,
+    /// G HUB's button number → the device's button (`button-N`), where the
+    /// two differ. A G502 X's onboard table runs G4, G6, G5, …, so its G5 is
+    /// `button-6`. Empty means they match, as on older mice and the G915.
+    #[serde(default)]
+    pub slot_map: Vec<(u32, u32)>,
 }
 
 /// Parses one `devices_NNNN.json`. Encrypted files yield an empty list.
@@ -233,12 +244,20 @@ pub fn parse_device_file(bytes: &[u8]) -> Vec<DeviceDef> {
             Some(DeviceDef {
                 model_id,
                 display_name: d.get("displayName").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                depot: d.get("depot").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                // Newer G HUB builds (869589) give a `depotPrefix` instead,
+                // with one depot per keyboard layout (`g213_nordic`, `g213_us`).
+                depot: d
+                    .get("depot")
+                    .or_else(|| d.get("depotPrefix"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
                 slot_prefix: d.get("slotPrefix").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                 kind: d.get("type").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                 thumbnail: d.get("thumbnail").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                 product_ids: pids,
                 zone_type_map,
+                slot_map: Vec::new(),
             })
         })
         .collect()
@@ -308,6 +327,8 @@ struct RawZone {
 #[derive(Debug, Clone, Deserialize)]
 struct RawComponent {
     #[serde(default)]
+    id: Option<serde_json::Value>,
+    #[serde(default)]
     renderings: Vec<RawRendering>,
 }
 
@@ -319,17 +340,35 @@ struct RawRendering {
     rect: Option<RawRect>,
 }
 
-// The rect values are strings in the wild ("405"), so accept both.
+// The rect values are strings in the wild ("405"), so accept both. Newer
+// depots (the G502 X's per-LED zones) also draw circles: centre and `r`.
 #[derive(Debug, Clone, Deserialize)]
 struct RawRect {
     #[serde(deserialize_with = "num_str")]
     x: f32,
     #[serde(deserialize_with = "num_str")]
     y: f32,
-    #[serde(deserialize_with = "num_str")]
-    width: f32,
-    #[serde(deserialize_with = "num_str")]
-    height: f32,
+    #[serde(default, deserialize_with = "num_str_opt")]
+    width: Option<f32>,
+    #[serde(default, deserialize_with = "num_str_opt")]
+    height: Option<f32>,
+    #[serde(default, deserialize_with = "num_str_opt")]
+    r: Option<f32>,
+}
+
+impl RawRect {
+    /// `(x, y, width, height)`: a rect as given, a circle as its bounding box.
+    fn bounds(&self, kind: &str) -> Option<(f32, f32, f32, f32)> {
+        match (kind, self.width, self.height, self.r) {
+            ("rect", Some(w), Some(h), _) => Some((self.x, self.y, w, h)),
+            ("circle", _, _, Some(r)) => Some((self.x - r, self.y - r, 2.0 * r, 2.0 * r)),
+            _ => None,
+        }
+    }
+}
+
+fn num_str_opt<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<f32>, D::Error> {
+    num_str(d).map(Some)
 }
 
 fn num_str<'de, D: serde::Deserializer<'de>>(d: D) -> Result<f32, D::Error> {
@@ -379,6 +418,11 @@ pub struct ZoneRect {
     pub y: f32,
     pub width: f32,
     pub height: f32,
+    /// The component's own id. In per-key zones it names the key: the HID
+    /// usage in `PERKEY_KEYBOARD`, the G-key number in `PERKEY_GKEY`, the
+    /// consumer usage in `PERKEY_CONSUMER`.
+    #[serde(default)]
+    pub component: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -403,6 +447,7 @@ pub fn parse_metadata(
     model_id: &str,
     display_name: &str,
     zone_type_map: &HashMap<String, String>,
+    slot_map: &[(u32, u32)],
 ) -> Result<ArtworkLayout, Error> {
     let raw: RawMetadata = serde_json::from_slice(bytes)
         .map_err(|e| Error::other(format!("metadata.json is malformed: {e}")))?;
@@ -417,15 +462,17 @@ pub fn parse_metadata(
                 .zones
                 .iter()
                 .flat_map(|z| {
-                    z.components.iter().flat_map(|c| c.renderings.iter()).filter_map(|r| {
-                        let rect = r.rect.as_ref().filter(|_| r.kind == "rect")?;
+                    z.components.iter().flat_map(|c| c.renderings.iter().map(move |r| (c, r))).filter_map(|(c, r)| {
+                        let (x, y, rw, rh) = r.rect.as_ref()?.bounds(&r.kind)?;
+                        let component = c.id.as_ref().and_then(|v| v.as_u64().or_else(|| v.as_str()?.parse().ok())).map(|n| n as u32);
                         Some(ZoneRect {
+                            component,
                             id: z.id.clone(),
                             location_name: zone_location_name(&z.id, zone_type_map),
-                            x: rect.x / w,
-                            y: rect.y / h,
-                            width: rect.width / w,
-                            height: rect.height / h,
+                            x: x / w,
+                            y: y / h,
+                            width: rw / w,
+                            height: rh / h,
                         })
                     })
                 })
@@ -437,7 +484,7 @@ pub fn parse_metadata(
                     let label_x = a.label.x / w;
                     ControlMarker {
                         slot_id: a.slot_id.clone(),
-                        control: control_id_for_slot(&a.slot_id),
+                        control: control_id_mapped(&a.slot_id, slot_map),
                         marker_x: a.marker.x / w,
                         marker_y: a.marker.y / h,
                         label_x,
@@ -487,8 +534,18 @@ fn zone_location_name(zone_id: &str, type_map: &HashMap<String, String>) -> Stri
 }
 
 /// `g502wireless_g7_m1` → `button-7`; anything unrecognised keeps the slot id.
+/// As [`control_id_for_slot`], through a device's `slot_map`.
+pub fn control_id_mapped(slot: &str, slot_map: &[(u32, u32)]) -> String {
+    let id = control_id_for_slot(slot);
+    let Some(n) = id.strip_prefix("button-").and_then(|n| n.parse::<u32>().ok()) else { return id };
+    slot_map.iter().find(|(g, _)| *g == n).map(|(_, b)| format!("button-{b}")).unwrap_or(id)
+}
+
 pub fn control_id_for_slot(slot: &str) -> String {
+    // The first part is the model prefix, which can itself look like a
+    // button ("g915_g1_m1", "g213_g3_m1"), so the button is after it.
     slot.split('_')
+        .skip(1)
         .find_map(|part| part.strip_prefix('g').and_then(|n| n.parse::<u32>().ok()))
         .map(|n| format!("button-{n}"))
         .unwrap_or_else(|| slot.to_string())
@@ -632,7 +689,13 @@ pub fn import_device_files(
 ) -> Result<ImportedDevice, Error> {
     let dir = crate::artwork::ensure_dir()
         .map_err(|e| Error::other(format!("artwork directory: {e}")))?;
-    let get = |name: &str| files.iter().find(|(n, _)| n == name).map(|(_, d)| d.as_slice());
+    // Some newer depots encrypt their renders (the G502 X's, build 869589).
+    // Those are Logitech's protected files: they are never written out, and
+    // nothing here tries to read them.
+    let encrypted = |name: &str| files.iter().any(|(n, d)| n == name && d.starts_with(&ENCRYPTED_MAGIC));
+    let get = |name: &str| {
+        files.iter().find(|(n, d)| n == name && !d.starts_with(&ENCRYPTED_MAGIC)).map(|(_, d)| d.as_slice())
+    };
 
     // The manifest names the resources; fall back to the conventional names.
     let mut front = "front.png".to_string();
@@ -667,7 +730,7 @@ pub fn import_device_files(
     // Wheel depots use a different metadata schema (zoom regions and slot
     // markers); no layout is not a failure.
     let layout = match get(&metadata) {
-        Some(bytes) => match parse_metadata(bytes, &def.model_id, &def.display_name, &def.zone_type_map) {
+        Some(bytes) => match parse_metadata(bytes, &def.model_id, &def.display_name, &def.zone_type_map, &def.slot_map) {
             Ok(l) => Some(l),
             Err(e) => {
                 log::info!("{}: no zone layout in metadata ({e})", def.display_name);
@@ -675,6 +738,14 @@ pub fn import_device_files(
             }
         },
         None => None,
+    };
+    // Markers and zones are positions on the render: without the render
+    // they would sit on whatever else is drawn, so they go with it.
+    let layout = if encrypted(&front) {
+        log::info!("{}: renders are encrypted; skipping its artwork and layout", def.display_name);
+        None
+    } else {
+        layout
     };
     /// Keeps the source's image format: the wheels ship WebP.
     fn ext_of(name: &str) -> &str {
@@ -738,6 +809,55 @@ pub fn import_device_files(
     })
 }
 
+/// Whether `dir/manifest.json` lists a device with this model id.
+fn manifest_has_model(dir: &Path, model_id: &str) -> bool {
+    std::fs::read(dir.join("manifest.json"))
+        .ok()
+        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+        .and_then(|m| m.get("devices").and_then(|d| d.as_array()).cloned())
+        .is_some_and(|list| list.iter().any(|d| d.get("modelId").and_then(|v| v.as_str()) == Some(model_id)))
+}
+
+/// Every file under `dir`, as (`path/relative/to/root`, bytes).
+fn collect_files(root: &Path, dir: &Path, out: &mut Vec<(String, Vec<u8>)>) {
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_files(root, &path, out);
+        } else if let (Ok(rel), Ok(data)) = (path.strip_prefix(root), std::fs::read(&path)) {
+            out.push((rel.to_string_lossy().replace('\\', "/"), data));
+        }
+    }
+}
+
+/// Picks a device's depot among `names`: the exact name, or else — for a
+/// newer build's `depotPrefix` — `<prefix>_<layout>`, preferring the desktop
+/// keyboard layout's family (`nordic` for se/fi/no/dk), then `us`. Firmware
+/// update depots (`_dfu`) are never a device's artwork.
+pub fn resolve_depot_name<'a>(names: impl Iterator<Item = &'a str> + Clone, depot: &str) -> Option<String> {
+    resolve_depot_name_for(names, depot, &crate::text::layout_name())
+}
+
+fn resolve_depot_name_for<'a>(names: impl Iterator<Item = &'a str> + Clone, depot: &str, layout: &str) -> Option<String> {
+    if depot.is_empty() {
+        return None;
+    }
+    if let Some(n) = names.clone().find(|n| *n == depot) {
+        return Some(n.to_string());
+    }
+    let prefix = format!("{depot}_");
+    let variants: Vec<&str> = names.filter(|n| n.starts_with(&prefix) && !n.ends_with("_dfu")).collect();
+    let family = match layout {
+        "se" | "fi" | "no" | "dk" => "nordic",
+        other => other,
+    };
+    [family, "us"]
+        .iter()
+        .find_map(|want| variants.iter().find(|v| v[prefix.len()..] == **want))
+        .or_else(|| variants.first())
+        .map(|v| v.to_string())
+}
+
 /// Reads a whole `C:\ProgramData\LGHUB` tree: caches the depository and the
 /// device database, then imports every device depot already present on disk.
 pub fn import_program_data(root: &Path) -> Result<ImportReport, Error> {
@@ -771,23 +891,39 @@ pub fn import_program_data(root: &Path) -> Result<ImportReport, Error> {
     .map_err(|e| Error::other(format!("could not cache device db: {e}")))?;
 
     let thumbs = build_dir.join("core_assets").join("thumbnails");
+    let on_disk: Vec<String> = std::fs::read_dir(&build_dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.path().is_dir())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    // Definitions from the encrypted part of the database, unless readable.
+    let mut defs = defs;
+    for b in builtin_defs() {
+        if !defs.iter().any(|d| d.model_id == b.model_id) {
+            defs.push(b);
+        }
+    }
     let mut imported = Vec::new();
     for def in &defs {
-        if def.depot.is_empty() || def.product_ids.is_empty() {
+        if def.product_ids.is_empty() {
             continue;
         }
-        let depot_dir = build_dir.join(&def.depot);
-        if !depot_dir.is_dir() {
+        let name = if def.depot.is_empty() {
+            // Depots named by id: find the one whose manifest has this model.
+            on_disk.iter().find(|d| manifest_has_model(&build_dir.join(d), &def.model_id)).cloned()
+        } else {
+            resolve_depot_name(on_disk.iter().map(String::as_str), &def.depot)
+        };
+        let Some(name) = name else {
             continue; // not downloaded by G HUB on that machine
-        }
+        };
+        let depot_dir = build_dir.join(name);
+        // Resources can sit in subfolders (`images/device/<id>`); keep their
+        // relative paths, which is how the manifest names them.
         let mut files = Vec::new();
-        for entry in std::fs::read_dir(&depot_dir).into_iter().flatten().flatten() {
-            if entry.path().is_file() {
-                if let Ok(data) = std::fs::read(entry.path()) {
-                    files.push((entry.file_name().to_string_lossy().to_string(), data));
-                }
-            }
-        }
+        collect_files(&depot_dir, &depot_dir, &mut files);
         let thumb_name = def.thumbnail.rsplit('/').next().unwrap_or("");
         let thumb = std::fs::read(thumbs.join(thumb_name)).ok();
         match import_device_files(&files, def, thumb.as_deref()) {
@@ -832,10 +968,27 @@ pub fn builtin_defs() -> Vec<DeviceDef> {
         thumbnail: String::new(),
         product_ids: pids.to_vec(),
         zone_type_map: Default::default(),
+        slot_map: Vec::new(),
     };
     vec![
         wheel("g923_ps4", "G923 Racing Wheel", "g923_ps4", &[0xc267, 0xc266]),
         wheel("g923_xbox", "G923 Racing Wheel", "g923_xbox", &[0xc26e, 0xc26d]),
+        // In build 869589 its entry sits in an encrypted device file and its
+        // depot has an id for a name, so the depot is found by the model id in
+        // its manifest (empty `depot`). The slot map is its onboard order,
+        // read off a G502 X PLUS: G5/G6 swapped, G7/G8 last, tilts (G10/G11)
+        // after G5.
+        DeviceDef {
+            model_id: "g502x_plus".into(),
+            display_name: "G502 X PLUS".into(),
+            depot: String::new(),
+            slot_prefix: "g502x-plus".into(),
+            kind: "mouse".into(),
+            thumbnail: String::new(),
+            product_ids: vec![0xc095, 0x4099],
+            zone_type_map: Default::default(),
+            slot_map: vec![(5, 6), (6, 5), (7, 11), (8, 10), (10, 7), (11, 8)],
+        },
     ]
 }
 
@@ -854,7 +1007,7 @@ pub fn fetch_for_product_ids(product_ids: &[u16]) -> Result<ImportedDevice, Erro
             ))
         })?;
     let entry = depository
-        .depot(&def.depot)
+        .depot_for(&def.depot)
         .ok_or_else(|| Error::other(format!("depot '{}' is not in the depository", def.depot)))?;
 
     log::info!("fetching depot {} ({} bytes) for {}", def.depot, entry.size, def.display_name);
@@ -897,6 +1050,16 @@ fn fetch_thumbnail(depository: &Depository, uri: &str) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn depot_prefixes_pick_the_layout_variant() {
+        let names = ["core", "g213_nordic", "g213_us", "g213_dfu", "g502_wireless"];
+        let r = |d: &str, l: &str| resolve_depot_name_for(names.iter().copied(), d, l);
+        assert_eq!(r("g502_wireless", "se").as_deref(), Some("g502_wireless"));
+        assert_eq!(r("g213", "se").as_deref(), Some("g213_nordic"));
+        assert_eq!(r("g213", "de").as_deref(), Some("g213_us"));
+        assert_eq!(r("g915", "se"), None);
+    }
 
     #[test]
     fn depot_round_trips() {
@@ -977,7 +1140,7 @@ mod tests {
         map.insert("ZONE_PRIMARY".into(), "PRIMARY".into());
         map.insert("ZONE_BRANDING".into(), "LOGO".into());
 
-        let layout = parse_metadata(json, "g502_wireless", "G502 LIGHTSPEED", &map).unwrap();
+        let layout = parse_metadata(json, "g502_wireless", "G502 LIGHTSPEED", &map, &[]).unwrap();
         assert_eq!(layout.views.len(), 2);
 
         let front = &layout.views[0];
@@ -1010,6 +1173,9 @@ mod tests {
         assert_eq!(control_id_for_slot("g502wireless_g11_m1"), "button-11");
         assert_eq!(control_id_for_slot("g502wireless_g9_m1_shifted"), "button-9");
         assert_eq!(control_id_for_slot("g502wireless_mouse_settings"), "g502wireless_mouse_settings");
+        assert_eq!(control_id_for_slot("g915_g1_m1"), "button-1");
+        assert_eq!(control_id_for_slot("g915_g5_m3"), "button-5");
+        assert_eq!(control_id_mapped("g502x-plus_g5_m1", &[(5, 6), (6, 5)]), "button-6");
     }
 
     #[test]

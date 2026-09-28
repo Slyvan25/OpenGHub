@@ -104,37 +104,49 @@
     "pedal-accelerator": { dot: { x: 0.8, y: 0.4 }, label: { x: 1.06, y: 0.3 }, side: "right" },
   };
 
+  /** What each button does out of the box, read from the device itself. */
+  let defaults = $state<string[]>([]);
+  $effect(() => {
+    const id = device.id;
+    api.getDefaultBindings(id).then((d) => (defaults = d)).catch(() => (defaults = []));
+  });
+
+  /** G HUB's own name for a slot: "g502x-plus_g8_m1" → "G8". */
+  function slotLabel(slot: string): string {
+    const parts = slot.split("_").slice(1);
+    const g = parts.map((p) => /^g(\d+)$/.exec(p)).find(Boolean);
+    if (g) return `G${g[1]}`;
+    const wheel = parts.map((p) => /^scroll(\d+)$/.exec(p)).find(Boolean);
+    return wheel ? `Scroll ${wheel[1]}` : slot;
+  }
+
   /**
-   * Models whose controls differ from the category default. `button-N` is
-   * index N-1 of the device's onboard button table, read off the real
-   * devices: a G502 X has its tilts at 7-8 and DPI up/down behind them, and a
-   * G915's table is G1-G5 followed by M1-M3 (which are not assignable).
+   * The device's controls come from its G HUB depot layout — which buttons
+   * exist, where, and G HUB's name for each — with their out-of-the-box
+   * action from the device. Only without a layout do the category lists
+   * apply. (Wheels keep their list: it carries G HUB's wheel numbering.)
    */
-  const G502X: Control[] = [
-    { id: "button-1", label: "Left click", fallback: "Primary Click" },
-    { id: "button-2", label: "Right click", fallback: "Secondary Click" },
-    { id: "button-3", label: "Middle click", fallback: "Middle Click" },
-    { id: "button-4", label: "G4", fallback: "Back" },
-    { id: "button-5", label: "G6", fallback: "DPI Shift" },
-    { id: "button-6", label: "G5", fallback: "Forward" },
-    { id: "button-7", label: "Scroll left", fallback: "Scroll Left" },
-    { id: "button-8", label: "Scroll right", fallback: "Scroll Right" },
-    { id: "button-9", label: "G9", fallback: "Profile Cycle" },
-    { id: "button-10", label: "G8", fallback: "DPI Up" },
-    { id: "button-11", label: "G7", fallback: "DPI Down" },
-  ];
-  const G915: Control[] = Array.from({ length: 5 }, (_, i) => ({
-    id: `button-${i + 1}`,
-    label: `G${i + 1}`,
-    fallback: `F${i + 1}`,
-  }));
-  const MODEL_CONTROLS: Record<number, Control[]> = {
-    0xc095: G502X, 0x4099: G502X, 0xc098: G502X, 0xc097: G502X,
-    0xc33e: G915, 0x407c: G915, 0xc33f: G915,
-  };
+  const deviceLayout = $derived(artwork.layoutFor(artworkIds(device)));
+  const layoutControls = $derived.by<Control[] | null>(() => {
+    if (!deviceLayout || device.kind === "wheel") return null;
+    const found = new Map<string, Control>();
+    for (const v of deviceLayout.views) {
+      for (const c of v.controls) {
+        if (found.has(c.control)) continue;
+        const n = /^button-(\d+)$/.exec(c.control);
+        found.set(c.control, {
+          id: c.control,
+          label: slotLabel(c.slotId),
+          fallback: (n && defaults[Number(n[1]) - 1]) || "Unassigned",
+        });
+      }
+    }
+    const order = (id: string) => Number(/^button-(\d+)$/.exec(id)?.[1] ?? 999);
+    return found.size ? [...found.values()].sort((a, b) => order(a.id) - order(b.id)) : null;
+  });
 
   const controls = $derived(
-    artworkIds(device).map((id) => MODEL_CONTROLS[id]).find(Boolean) ??
+    layoutControls ??
       (device.kind === "keyboard" ? keyboardControls : device.kind === "wheel" ? wheelControls : mouseControls),
   );
 
@@ -299,7 +311,7 @@
    * G HUB's M1/M2/M3 on keyboards with M-keys: each keeps its own G-key
    * bindings, stored as `button-1:m2` / `button-1:m3` (M1 has no suffix).
    */
-  const hasMKeys = $derived(controls === G915);
+  const hasMKeys = $derived(device.kind === "keyboard" && !!device.capabilities.mKeys);
   let mstate = $state<1 | 2 | 3>(1);
 
   /** Control id as stored for the current layer. */
@@ -877,6 +889,8 @@
             oncontextmenu={(e) => resetControl(e, control.id)}
             data-control={control.id}
           >
+            <!-- Which button this is (G8, Left click…), then what it does. -->
+            <span class="callout-name">{control.label}</span>
             <span class="callout-binding" class:bound={!!bound} title={control.label}>
               {bound?.label ?? control.fallback}
             </span>
@@ -1367,6 +1381,15 @@
   }
 
   /* G HUB prints the bound command as the label: white by default, yellow when changed. */
+  .callout-name {
+    display: block;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-dimmer);
+  }
+
   .callout-binding {
     font-size: 13px;
     font-weight: 700;

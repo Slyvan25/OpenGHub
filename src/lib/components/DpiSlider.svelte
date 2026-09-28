@@ -203,6 +203,19 @@
   function shown(index: number): number {
     return dragging === index && dragValue !== null ? dragValue : stages[index];
   }
+
+  /**
+   * G HUB colours the speeds by rank: yellow for the lowest, pink for the
+   * highest, and steps between for the rest.
+   */
+  const LADDER = ["#f5b400", "#6ad24b", "#1196ff", "#8a5cff", "#ff4fa3"];
+  function stageColour(i: number): string {
+    const sorted = [...stages].map((v, j) => [v, j] as const).sort((a, b) => a[0] - b[0]);
+    const rank = sorted.findIndex(([, j]) => j === i);
+    const n = stages.length;
+    const at = n <= 1 ? 0 : Math.round((rank / (n - 1)) * (LADDER.length - 1));
+    return LADDER[at];
+  }
 </script>
 
 <div class="dpi-slider" class:disabled>
@@ -224,7 +237,7 @@
           class:shift={i === shiftStage}
           class:dragging={dragging === i}
           class:off={dragging === i && dragOff}
-          style="left: {p * 100}%"
+          style="left: {p * 100}%; --stage: {stageColour(i)}"
         >
           {#if editing === i}
             <!-- svelte-ignore a11y_autofocus -->
@@ -332,7 +345,7 @@
     width: 12px;
     height: 12px;
     border-radius: 50%;
-    background: #fff;
+    background: var(--stage, #fff);
     cursor: grab;
     transition: transform 100ms;
   }
@@ -341,7 +354,9 @@
     width: 13px;
     height: 13px;
     border-radius: 2px;
-    background: var(--shift);
+    background: var(--stage, var(--shift));
+    outline: 2px solid var(--shift);
+    outline-offset: 1px;
     transform: rotate(45deg);
   }
 
@@ -365,7 +380,8 @@
     font-family: var(--font);
     font-size: 16px;
     font-weight: 700;
-    color: var(--text);
+    /* The same colour as its marker, as in G HUB. */
+    color: var(--stage, var(--text));
     white-space: nowrap;
     cursor: pointer;
   }
@@ -377,7 +393,7 @@
   }
 
   .value.shift {
-    color: var(--shift);
+    color: var(--stage, var(--shift));
   }
 
   .marker.off .value {

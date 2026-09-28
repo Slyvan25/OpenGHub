@@ -104,6 +104,7 @@ pub fn run() {
             commands::set_profile_lock,
             commands::reapply_lighting,
             commands::get_onboard_slots,
+            commands::get_default_bindings,
             commands::set_onboard_slot_enabled,
             commands::write_profile_to_slot,
             commands::get_connected_devices,
@@ -673,6 +674,57 @@ fn perform(app: &tauri::AppHandle, ev: state::ButtonEvent) {
     }
 }
 
+/// The DPI stage colours, by rank from slowest to fastest — the same ladder
+/// the Sensitivity page draws (G HUB: yellow lowest, pink highest).
+const DPI_LADDER: [[u8; 3]; 5] = [[0xf5, 0xb4, 0x00], [0x6a, 0xd2, 0x4b], [0x11, 0x96, 0xff], [0x8a, 0x5c, 0xff], [0xff, 0x4f, 0xa3]];
+
+fn stage_colour(stages: &[u16], index: usize) -> [u8; 3] {
+    let value = stages[index];
+    let rank = stages.iter().filter(|v| **v < value).count();
+    let n = stages.len();
+    let at = if n <= 1 { 0 } else { ((rank as f32 / (n - 1) as f32) * (DPI_LADDER.len() - 1) as f32).round() as usize };
+    DPI_LADDER[at.min(DPI_LADDER.len() - 1)]
+}
+
+enum DpiColour {
+    /// Show the stage's colour briefly, then the profile's lighting again.
+    Flash,
+    /// Show it until `Restore` (DPI shift held).
+    Hold,
+    Restore,
+}
+
+/// G HUB shows a DPI change on the mouse's own lights, in the stage's colour.
+/// Only when the profile has lighting to go back to.
+fn dpi_colour(app: &tauri::AppHandle, device_id: &str, dp: &profiles::DeviceProfile, index: usize, how: DpiColour) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static GENERATION: AtomicU64 = AtomicU64::new(0);
+    if dp.lighting_zones.is_empty() || index >= dp.dpi_stages.len() {
+        return;
+    }
+    // A newer change cancels an older flash's restore.
+    let mine = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    let manager = app.state::<DeviceManager>();
+    match how {
+        DpiColour::Restore => write_profile_lighting(app, device_id, None),
+        DpiColour::Hold | DpiColour::Flash => {
+            let rgb = stage_colour(&dp.dpi_stages, index);
+            if let Err(e) = manager.set_lighting(device_id, 0xff, rgb, hidpp::features::LightEffect::Fixed, false) {
+                log::debug!("{device_id}: dpi colour not shown: {e}");
+            }
+            if let DpiColour::Flash = how {
+                let (app, id) = (app.clone(), device_id.to_string());
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_millis(1200));
+                    if GENERATION.load(Ordering::SeqCst) == mine {
+                        write_profile_lighting(&app, &id, None);
+                    }
+                });
+            }
+        }
+    }
+}
+
 /// DPI up / down / cycle / default / shift against the profile's stage list,
 /// written to the device and saved back so the Sensitivity page follows.
 fn dpi_action(app: &tauri::AppHandle, device_id: &str, action: &remap::Action, pressed: bool) {
@@ -681,9 +733,28 @@ fn dpi_action(app: &tauri::AppHandle, device_id: &str, action: &remap::Action, p
     let manager = app.state::<DeviceManager>();
     let cfg = store.get();
     let Some(profile) = cfg.profiles.iter().find(|p| p.id == cfg.active_profile) else { return };
-    let dp = profile.devices.get(device_id).cloned().unwrap_or_default();
+    let mut dp = profile.devices.get(device_id).cloned().unwrap_or_default();
     if dp.dpi_stages.is_empty() {
-        return;
+        // A profile that never set DPI gets the device's factory ladder, as a
+        // fresh G HUB profile does, saved so the Sensitivity page shows it.
+        let ids: Vec<u16> = manager
+            .snapshot(device_id)
+            .map(|s| s.model_ids.iter().copied().chain([s.product_id]).collect())
+            .unwrap_or_default();
+        let Some((stages, default, shift)) = state::factory_dpi(&ids) else { return };
+        dp.dpi_stages = stages;
+        dp.active_stage = default;
+        dp.shift_stage = Some(shift);
+        let (id, pid, seeded) = (device_id.to_string(), profile.id.clone(), dp.clone());
+        let _ = store.update(move |c| {
+            if let Some(p) = c.profiles.iter_mut().find(|p| p.id == pid) {
+                let d = p.devices.entry(id.clone()).or_default();
+                d.dpi_stages = seeded.dpi_stages.clone();
+                d.active_stage = seeded.active_stage;
+                d.shift_stage = seeded.shift_stage;
+            }
+        });
+        let _ = app.emit(commands::EVENT_CONFIG_CHANGED, store.get());
     }
     let last = dp.dpi_stages.len() - 1;
     let current = dp.active_stage.min(last);
@@ -692,6 +763,8 @@ fn dpi_action(app: &tauri::AppHandle, device_id: &str, action: &remap::Action, p
     if let Action::DpiShift = action {
         let shift = dp.shift_stage.unwrap_or(0).min(last);
         let target = if pressed { dp.dpi_stages[shift] } else { dp.dpi_stages[current] };
+        // The shift speed's colour for as long as it is held.
+        dpi_colour(app, device_id, &dp, shift, if pressed { DpiColour::Hold } else { DpiColour::Restore });
         if let Err(e) = manager.set_dpi(device_id, target) {
             log::warn!("dpi shift failed: {e}");
         }
@@ -713,11 +786,13 @@ fn dpi_action(app: &tauri::AppHandle, device_id: &str, action: &remap::Action, p
         }
         _ => current,
     };
+    log::info!("{device_id}: {action:?} stage {current} → {next} of {:?}", dp.dpi_stages);
     if next == current && !matches!(action, Action::DpiDefault) {
         return;
     }
     match manager.set_dpi(device_id, dp.dpi_stages[next]) {
         Ok(_) => {
+            dpi_colour(app, device_id, &dp, next, DpiColour::Flash);
             let id = device_id.to_string();
             let pid = profile.id.clone();
             let _ = store.update(|c| {
@@ -746,6 +821,7 @@ fn next_profile(app: &tauri::AppHandle) {
     }
     let pos = enabled.iter().position(|p| p.id == cfg.active_profile).unwrap_or(0);
     let next = enabled[(pos + 1) % enabled.len()].id.clone();
+    log::info!("profile cycle: '{}' → '{}'", enabled[pos].name, enabled[(pos + 1) % enabled.len()].name);
     let _ = store.update(|c| c.active_profile = next);
     let _ = app.emit(commands::EVENT_CONFIG_CHANGED, store.get());
     apply_all_profiles(app);

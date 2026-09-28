@@ -57,6 +57,8 @@ export interface Capabilities {
   perKey?: boolean;
   /** Keys the host can disable: Game Mode. */
   gameMode?: boolean;
+  /** M1-M3 keys, each with its own G-key bindings. */
+  mKeys?: boolean;
   /** A racing wheel driven through the classic command channel. */
   wheel?: boolean;
 }
@@ -511,7 +513,16 @@ export interface ArtworkView {
   view: "front" | "side" | string;
   width: number;
   height: number;
-  zones: { id: string; locationName: string; x: number; y: number; width: number; height: number }[];
+  zones: {
+    id: string;
+    locationName: string;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    /** In per-key zones, the key: HID usage, G-key number or consumer usage. */
+    component?: number | null;
+  }[];
   controls: {
     slotId: string;
     control: string;

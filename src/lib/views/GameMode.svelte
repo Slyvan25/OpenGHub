@@ -12,7 +12,7 @@
   import KeyboardMap from "$lib/components/KeyboardMap.svelte";
   import Toggle from "$lib/components/Toggle.svelte";
   import { artworkIds } from "$lib/device-ui";
-  import { G915_IDS, G915_KEYS, G915_SIZE, type Key } from "$lib/keyboards/g915";
+  import { keyMapFor, type Key } from "$lib/keyboards";
   import type { Device } from "$lib/types";
 
   interface Props {
@@ -23,9 +23,7 @@
   /** Always disabled in Game Mode: both Windows keys and Menu. */
   const FIXED = [0xe3, 0xe7, 0x65];
 
-  const keyMap = $derived(
-    artworkIds(device).some((id) => G915_IDS.includes(id)) ? { keys: G915_KEYS, size: G915_SIZE } : null,
-  );
+  const keyMap = $derived(keyMapFor(device));
   const on = $derived((configStore.settings.gameModeDevices ?? []).includes(device.id));
   const disabled = $derived(configStore.deviceProfile(device.id).gameModeKeys ?? FIXED);
   const marked = $derived(
@@ -82,13 +80,18 @@
         <KeyboardMap
           keys={keyMap.keys}
           size={keyMap.size}
+          image={keyMap.image}
           {marked}
           pickable={(k) => k.usage !== undefined}
           onpick={pick}
         />
       </div>
     {:else}
-      <p class="hint">No key map for this keyboard yet.</p>
+      <p class="hint">
+        The key map comes from G HUB's data for this keyboard. Import it under
+        <a href="/settings">Settings → G HUB data</a>; until then the Windows and Menu keys are what Game
+        Mode disables.
+      </p>
     {/if}
   {/snippet}
 </DeviceWorkspace>

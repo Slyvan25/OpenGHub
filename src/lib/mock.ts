@@ -84,6 +84,7 @@ function makeDevice(
       onboardMemory: !!o.onboard,
       perKey: !!o.perKey,
       gameMode: kind === "keyboard",
+      mKeys: kind === "keyboard" && !!o.perKey,
       wheel: !!o.wheel,
     },
     battery:
@@ -422,6 +423,9 @@ export async function mockInvoke<T>(command: string, args: Record<string, unknow
     case "set_per_key_lighting":
     case "reapply_lighting":
       return undefined as T;
+
+    case "get_default_bindings":
+      return [] as T;
 
     case "save_settings":
       config.settings = JSON.parse(JSON.stringify(args.settings)) as Config["settings"];

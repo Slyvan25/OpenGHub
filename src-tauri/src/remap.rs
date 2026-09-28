@@ -96,6 +96,20 @@ impl Action {
     }
 }
 
+/// What a factory special button does, in software (host mode). Wheel tilts
+/// (1, 2) are left to the device, which still sends them.
+pub fn special_default(action: u8) -> Option<Action> {
+    Some(match action {
+        0x03 => Action::DpiUp,
+        0x04 => Action::DpiDown,
+        0x05 => Action::DpiCycle,
+        0x06 => Action::DpiDefault,
+        0x07 => Action::DpiShift,
+        0x08 | 0x0a => Action::ProfileNext,
+        _ => return None,
+    })
+}
+
 /// Which M-key state (1-3) an assignment belongs to. G HUB keeps a set of
 /// G-key bindings per M1/M2/M3; OpenGHub stores M2 and M3 as `button-1:m2`,
 /// `button-1:m3`, and anything without a suffix is M1.

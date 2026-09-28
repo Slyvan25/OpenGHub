@@ -735,6 +735,60 @@ pub async fn save_device_profile(
     Ok(store.get())
 }
 
+/// What each button does out of the box, from the device's own factory table
+/// (the oldest onboard backup): shown for buttons nothing is assigned to.
+/// Index 0 is `button-1`.
+#[tauri::command]
+pub async fn get_default_bindings(manager: State<'_, DeviceManager>, device_id: String) -> Result<Vec<String>> {
+    use crate::hidpp::onboard::Button;
+    let Some(snap) = manager.snapshot(&device_id) else { return Ok(Vec::new()) };
+    let ids: Vec<u16> = snap.model_ids.iter().copied().chain([snap.product_id]).collect();
+    let usage_name = |u: u8| -> String {
+        match u {
+            0x04..=0x1d => ((b'A' + u - 0x04) as char).to_string(),
+            0x1e..=0x26 => ((b'1' + u - 0x1e) as char).to_string(),
+            0x27 => "0".into(),
+            0x3a..=0x45 => format!("F{}", u - 0x39),
+            0x29 => "Escape".into(),
+            other => format!("Key {other:#04x}"),
+        }
+    };
+    Ok(crate::state::factory_buttons(&ids, 16)
+        .into_iter()
+        .map(|b| match b {
+            Button::Mouse { mask } => match mask {
+                1 => "Primary Click".into(),
+                2 => "Secondary Click".into(),
+                4 => "Middle Click".into(),
+                8 => "Back".into(),
+                16 => "Forward".into(),
+                m => format!("Mouse button {}", m.trailing_zeros() + 1),
+            },
+            Button::Key { modifiers: 0, usage } => usage_name(usage),
+            Button::Key { usage, .. } => format!("{} (with modifiers)", usage_name(usage)),
+            Button::Consumer { .. } => "Media key".into(),
+            Button::Special { action, param } => match action {
+                0x01 => "Scroll Left".into(),
+                0x02 => "Scroll Right".into(),
+                0x03 => "DPI Up".into(),
+                0x04 => "DPI Down".into(),
+                0x05 => "DPI Cycle".into(),
+                0x06 => "DPI Default".into(),
+                0x07 => "DPI Shift".into(),
+                0x08 => "Next Profile".into(),
+                0x09 => "Previous Profile".into(),
+                0x0a => "Profile Cycle".into(),
+                0x0b => "G-Shift".into(),
+                0x0d => format!("Profile {}", param[1]),
+                a => format!("Special {a:#04x}"),
+            },
+            Button::Macro { .. } => "Macro".into(),
+            Button::Disabled => "Disabled".into(),
+            Button::Raw { .. } => String::new(),
+        })
+        .collect())
+}
+
 /// G HUB's ON-BOARD MEMORY SLOTS.
 #[tauri::command]
 pub async fn get_onboard_slots(manager: State<'_, DeviceManager>, device_id: String) -> Result<Vec<crate::state::OnboardSlot>> {

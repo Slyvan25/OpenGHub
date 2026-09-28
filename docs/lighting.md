@@ -69,7 +69,9 @@ later than 0x8070's) and sets them with `setRgbClusterEffect`, whose payload mat
 13 LED ids, both `0xff`-terminated when shorter; fn 7 commits. The cluster effects are switched
 off first. LED ids on the G915 are `usage − 3` for ordinary keys, `usage − 0x78` for modifiers,
 `0xb3 + n` for G-keys, `0xd2` for the logo, and their own codes for the media keys — the
-numbering OpenRGB documents. `src/lib/keyboards/g915.ts` is OpenGHub's own drawn ISO map.
+numbering OpenRGB documents. Key positions only come from the device's G HUB depot (its per-key
+zones, see below): no keyboard has a hardcoded key map, and without imported G HUB data the
+per-key pages say how to import it.
 
 - **Freestyle** paints keys on that map; the colours live in the profile (`perKey`).
 - **Animations** are Freestyle frames played by `animation.rs`: per frame duration, fade or cut,
@@ -116,6 +118,27 @@ same from the command line.
 
 Nothing from Logitech is bundled in this repository. The user supplies the depository from
 their own installation; OpenGHub then does what the official client does.
+
+### Newer G HUB builds (869589)
+
+- Devices carry a `depotPrefix` (`g213`) and ship one depot per keyboard layout (`g213_nordic`,
+  `g213_us`); the importer picks the variant for the desktop layout (nordic for se/fi/no/dk,
+  else us, never `_dfu`). `current.json` only lists depots that installation downloaded, so a
+  device has to have been connected to that G HUB once.
+- Some device entries are encrypted and their depots are named by id (the G502 X PLUS); built-in
+  definitions cover those, and the depot is found by the model id in its `manifest.json`.
+- Resources can sit in subfolders (`images/device/<id>`), and per-LED zones can be circles.
+- Assignment controls come from the depot layout too — which buttons exist, where, and G HUB's
+  name for each (`G8`) — with each button's out-of-the-box action read from the device's own
+  factory table, not written into the code.
+- Per-key zones name each key by its component id — the HID usage in `PERKEY_KEYBOARD`, the G-key
+  number in `PERKEY_GKEY`, the consumer usage in `PERKEY_CONSUMER` — so the key maps for Freestyle,
+  animations and Game Mode are built from the depot and drawn over its render.
+- Some renders are **encrypted** (the G502 X's). They are Logitech's protected files: OpenGHub
+  never decrypts them, skips them, and skips that depot's layout too, since its markers only fit
+  the render. Such a device keeps any artwork the user supplied.
+- G HUB's button numbers can differ from a device's onboard order; a device definition's
+  `slot_map` translates them (G502 X: G5/G6 swapped, G7/G8 last, tilts G10/G11).
 
 ## Zone positions without a depot
 

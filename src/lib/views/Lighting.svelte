@@ -13,7 +13,7 @@
   import RegionPicker from "$lib/components/RegionPicker.svelte";
   import Slider from "$lib/components/Slider.svelte";
   import KeyboardMap from "$lib/components/KeyboardMap.svelte";
-  import { G915_IDS, G915_KEYS, G915_SIZE, type Key } from "$lib/keyboards/g915";
+  import { keyMapFor, type Key } from "$lib/keyboards";
   import { artworkIds, batteryIcon, batteryLabel } from "$lib/device-ui";
   import { artwork } from "$lib/stores/artwork.svelte";
   import { configStore } from "$lib/stores/config.svelte";
@@ -110,11 +110,7 @@
   let syncingOptions = $state(false);
   const zoneInfo = $derived(zones.find((z) => z.index === activeZone));
   /** The drawn key map, for keyboards OpenGHub has one for. */
-  const keyMap = $derived(
-    device.capabilities.perKey && artworkIds(device).some((id) => G915_IDS.includes(id))
-      ? { keys: G915_KEYS, size: G915_SIZE }
-      : null,
-  );
+  const keyMap = $derived(device.capabilities.perKey ? keyMapFor(device) : null);
   /** Only offer effects this particular zone advertises. */
   const available = $derived([
     ...(zoneInfo?.effects ?? [0x00, 0x01, 0x03, 0x0a])
@@ -210,7 +206,11 @@
   /** OpenGHub's own starting points, generated from the key map. */
   function preset(kind: "scanner" | "rows") {
     const keys = keyMap?.keys ?? [];
-    const cols = Math.ceil(Math.max(...keys.map((k) => k.x + k.w)));
+    const size = keyMap?.size ?? { w: 1, h: 1 };
+    // In fractions of the keyboard, so depot pixels and drawn units both work.
+    const cols = 24;
+    const colOf = (k: Key) => Math.floor(((k.x + k.w / 2) / size.w) * cols);
+    const rowOf = (k: Key) => Math.floor(((k.y + k.h / 2) / size.h) * 7);
     const hue = (h: number) => {
       const f = (n: number) => {
         const k = (n + h / 60) % 6;
@@ -223,11 +223,11 @@
     const frames =
       kind === "scanner"
         ? Array.from({ length: cols }, (_, c) => ({
-            keys: lit((k) => k.x <= c + 0.5 && k.x + k.w > c - 0.5, current.color),
+            keys: lit((k) => colOf(k) === c, current.color),
             durationMs: 60,
           }))
         : Array.from({ length: 12 }, (_, i) => ({
-            keys: Object.fromEntries(keys.flatMap((k) => (k.led !== undefined ? [[k.led, hue((k.y * 45 + i * 30) % 360)]] : []))),
+            keys: Object.fromEntries(keys.flatMap((k) => (k.led !== undefined ? [[k.led, hue((rowOf(k) * 45 + i * 30) % 360)]] : []))),
             durationMs: 250,
           }));
     frameIndex = 0;
@@ -839,7 +839,7 @@
       </div>
     {:else if current.effect === "animation" && keyMap}
       <div class="freestyle">
-        <KeyboardMap keys={keyMap.keys} size={keyMap.size} fill={frameFill} onpick={paintFrame} />
+        <KeyboardMap keys={keyMap.keys} size={keyMap.size} image={keyMap.image} fill={frameFill} onpick={paintFrame} />
         <div class="frames">
           {#each animation.frames as f, i (i)}
             <button class="frame" class:active={i === frameIndex} onclick={() => (frameIndex = i)}>
@@ -853,7 +853,7 @@
     {:else if current.effect === "freestyle" && keyMap}
       <!-- G HUB's Freestyle: pick a colour, click keys or drag a box over them. -->
       <div class="freestyle">
-        <KeyboardMap keys={keyMap.keys} size={keyMap.size} fill={perKeyFill} onpick={paint} />
+        <KeyboardMap keys={keyMap.keys} size={keyMap.size} image={keyMap.image} fill={perKeyFill} onpick={paint} />
         <p class="freestyle-hint">Click a key or drag over several to paint them. Black turns keys off.</p>
       </div>
     {:else}

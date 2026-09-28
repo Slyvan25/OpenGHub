@@ -4,7 +4,7 @@
    * (G HUB's Freestyle and Game Mode pickers). Purely presentational — the
    * caller decides what a "paint" means and supplies the colours.
    */
-  import type { Key } from "$lib/keyboards/g915";
+  import type { Key } from "$lib/keyboards";
 
   interface Props {
     keys: Key[];
@@ -15,9 +15,11 @@
     marked?: Set<string>;
     /** Keys that cannot be picked are dimmed and ignore clicks. */
     pickable?: (key: Key) => boolean;
+    /** The device render to draw the keys on (G HUB depot layouts). */
+    image?: string | null;
     onpick: (keys: Key[]) => void;
   }
-  let { keys, size, fill = {}, marked = new Set(), pickable = () => true, onpick }: Props = $props();
+  let { keys, size, fill = {}, marked = new Set(), pickable = () => true, image = null, onpick }: Props = $props();
 
   let box: HTMLDivElement | undefined = $state();
   let drag = $state<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
@@ -60,6 +62,8 @@
 
 <div
   class="kb"
+  class:photo={!!image}
+  style:background-image={image ? `url("${image}")` : undefined}
   bind:this={box}
   style="aspect-ratio: {size.w} / {size.h}"
   onpointerdown={down}
@@ -80,7 +84,7 @@
              height: calc({(k.h / size.h) * 100}% - 3px); {colour ? `--c: ${colour};` : ''}"
       title={k.label}
     >
-      <span>{k.label}</span>
+      {#if !image}<span>{k.label}</span>{/if}
     </div>
   {/each}
   {#if drag}
@@ -132,6 +136,27 @@
 
   .key.off {
     opacity: 0.35;
+  }
+
+  /* On the device render the keys are outlines over the photo, and a lit
+     key is a wash of its colour, the way G HUB's Freestyle looks. */
+  .kb.photo {
+    background-size: 100% 100%;
+    background-repeat: no-repeat;
+  }
+
+  .kb.photo .key {
+    background: transparent;
+    border-color: rgba(255, 255, 255, 0.12);
+  }
+
+  .kb.photo .key.lit {
+    background: color-mix(in srgb, var(--c) 60%, transparent);
+    border-color: var(--c);
+  }
+
+  .kb.photo .key.marked {
+    background: rgba(255, 255, 255, 0.75);
   }
 
   .band {

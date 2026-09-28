@@ -127,6 +127,8 @@ export const setPerKeyLighting = (deviceId: string, keys: { led: number; color: 
 
 export const reapplyLighting = () => call<void>("reapply_lighting");
 
+/** Each button's out-of-the-box action, from the device (index 0 = button-1). */
+export const getDefaultBindings = (deviceId: string) => call<string[]>("get_default_bindings", { deviceId });
 export const getOnboardSlots = (deviceId: string) => call<OnboardSlot[]>("get_onboard_slots", { deviceId });
 export const setOnboardSlotEnabled = (deviceId: string, index: number, enabled: boolean) =>
   call<OnboardSlot[]>("set_onboard_slot_enabled", { deviceId, index, enabled });

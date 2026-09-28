@@ -34,6 +34,11 @@ pub fn strokes() -> &'static HashMap<char, Stroke> {
     })
 }
 
+/// The desktop's first keyboard layout code, e.g. `se`.
+pub fn layout_name() -> String {
+    configured_layout().0
+}
+
 /// The first configured layout: environment, then KDE, then systemd-localed.
 fn configured_layout() -> (String, String) {
     let first = |s: &str| s.split(',').next().unwrap_or("").trim().to_string();

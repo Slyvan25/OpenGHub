@@ -39,6 +39,9 @@ pub struct Capabilities {
     /// Keys the host can disable (0x4522): Game Mode.
     #[serde(default)]
     pub game_mode: bool,
+    /// M1-M3 keys (0x8020), each with its own set of G-key bindings.
+    #[serde(default)]
+    pub m_keys: bool,
     /// A racing wheel driven through the classic command channel.
     #[serde(default)]
     pub wheel: bool,
@@ -568,7 +571,11 @@ impl DeviceManager {
             Ok(Some((idx, count, midx, mr))) => {
                 report.software = true;
                 inner.gkey_index.insert(id.to_string(), idx);
-                inner.plans.insert(id.to_string(), remap::gkey_plan(all_assignments, macros, count, state));
+                let mut plan = remap::gkey_plan(all_assignments, macros, count, state);
+                if let Some(prev) = inner.plans.get(id) {
+                    plan.pressed = prev.pressed;
+                }
+                inner.plans.insert(id.to_string(), plan);
                 inner.mkeys.insert(
                     id.to_string(),
                     MKeys { index: midx, mr, count, state, assignments: all_assignments.to_vec(), macros: macros.to_vec() },
@@ -581,7 +588,34 @@ impl DeviceManager {
         let onboard_chosen = inner.snapshots.get(id).and_then(|s| s.onboard_mode).unwrap_or(false);
         if spy && !onboard_chosen {
             let count = inner.with_handle(id, features::spy_button_count)?;
-            let plan = Plan::build(assignments, macros, count);
+            let mut plan = Plan::build(assignments, macros, count);
+            // Host mode: the device no longer runs its own DPI and profile
+            // buttons, so buttons left unassigned get their factory action
+            // in software, as G HUB does.
+            let ids: Vec<u16> = inner
+                .snapshots
+                .get(id)
+                .map(|s| s.model_ids.iter().copied().chain([s.product_id]).collect())
+                .unwrap_or_default();
+            let assigned: Vec<u8> = assignments
+                .iter()
+                .filter(|a| !a.control.contains(":gshift"))
+                .filter_map(|a| remap::button_index(&a.control))
+                .collect();
+            for (i, b) in factory_buttons(&ids, count as usize).iter().enumerate() {
+                let crate::hidpp::onboard::Button::Special { action, .. } = b else { continue };
+                let Some(act) = remap::special_default(*action) else { continue };
+                if (i as u8) < 16 && !assigned.contains(&(i as u8)) {
+                    plan.remapping[i] = 0;
+                    plan.actions.insert(i as u8, act);
+                }
+            }
+            log::debug!("{id}: software actions {:?}", plan.actions);
+            // A button still held across a rebuild (a profile switch made by
+            // that very button) must not count as a fresh press.
+            if let Some(prev) = inner.plans.get(id) {
+                plan.pressed = prev.pressed;
+            }
             let table = plan.remapping;
             let needs_spy = plan.needs_spy() || watch_all;
             inner.with_handle(id, |h| {
@@ -1539,10 +1573,34 @@ impl Inner {
 /// (a G915 is `c33e` wired and `b354` wireless), and the oldest backup may
 /// have been taken under either.
 pub fn factory_buttons(product_ids: &[u16], count: usize) -> Vec<crate::hidpp::onboard::Button> {
-    use crate::hidpp::onboard::{self, Button, BUTTONS_OFFSET};
-    let Some(dir) = crate::artwork::dir().parent().map(|d| d.join("backups")) else {
-        return vec![];
-    };
+    use crate::hidpp::onboard::{Button, BUTTONS_OFFSET};
+    let Some(bytes) = factory_profile(product_ids) else { return vec![] };
+    (0..count)
+        .filter_map(|i| {
+            let at = BUTTONS_OFFSET + i * 4;
+            bytes.get(at..at + 4).map(|b| Button::decode([b[0], b[1], b[2], b[3]]))
+        })
+        .collect()
+}
+
+/// The factory DPI ladder of the oldest backup: `(stages, default, shift)`.
+pub fn factory_dpi(product_ids: &[u16]) -> Option<(Vec<u16>, usize, usize)> {
+    let raw = factory_profile(product_ids)?;
+    let stages: Vec<u16> = (0..5)
+        .map(|i| u16::from_le_bytes([raw[3 + i * 2], raw[4 + i * 2]]))
+        .take_while(|v| *v != 0 && *v != 0xffff)
+        .collect();
+    if stages.is_empty() {
+        return None;
+    }
+    let last = stages.len() - 1;
+    Some((stages, (raw[1] as usize).min(last), (raw[2] as usize).min(last)))
+}
+
+/// The first enabled onboard profile of the oldest backup of any of these ids.
+fn factory_profile(product_ids: &[u16]) -> Option<Vec<u8>> {
+    use crate::hidpp::onboard;
+    let dir = crate::artwork::dir().parent().map(|d| d.join("backups"))?;
     // `<pid>-<unix seconds>.json`; the oldest stamp wins across ids.
     let stamp_of = |p: &std::path::Path| -> Option<(u64, u16)> {
         let name = p.file_stem()?.to_str()?;
@@ -1561,33 +1619,13 @@ pub fn factory_buttons(product_ids: &[u16], count: usize) -> Vec<crate::hidpp::o
         })
         .ok()
         .flatten();
-    let Some(oldest) = oldest else {
-        return vec![];
-    };
-    let Ok(text) = std::fs::read_to_string(oldest) else {
-        return vec![];
-    };
-    let Ok(backup) = serde_json::from_str::<onboard::MemoryBackup>(&text) else {
-        return vec![];
-    };
+    let text = std::fs::read_to_string(oldest?).ok()?;
+    let backup = serde_json::from_str::<onboard::MemoryBackup>(&text).ok()?;
     let unhex = |h: &str| -> Vec<u8> { (0..h.len()).step_by(2).filter_map(|i| u8::from_str_radix(&h[i..i + 2], 16).ok()).collect() };
-    let Some(dir_sector) = backup.sectors.first() else {
-        return vec![];
-    };
-    let directory = onboard::parse_directory(&unhex(dir_sector));
-    let Some(entry) = directory.iter().find(|e| e.enabled) else {
-        return vec![];
-    };
-    let Some(profile) = backup.sectors.get(entry.sector as usize) else {
-        return vec![];
-    };
-    let bytes = unhex(profile);
-    (0..count)
-        .filter_map(|i| {
-            let at = BUTTONS_OFFSET + i * 4;
-            bytes.get(at..at + 4).map(|b| Button::decode([b[0], b[1], b[2], b[3]]))
-        })
-        .collect()
+    let directory = onboard::parse_directory(&unhex(backup.sectors.first()?));
+    let entry = directory.iter().find(|e| e.enabled)?;
+    let bytes = unhex(backup.sectors.get(entry.sector as usize)?);
+    (bytes.len() > 13).then_some(bytes)
 }
 
 /// Makes the device re-read its profile after a sector write: a round trip
@@ -1752,6 +1790,7 @@ fn probe(handle: &mut Handle, snapshot: &mut DeviceSnapshot, endpoint: &hidpp::E
         per_key: handle.supports(features::per_key::ID) && snapshot.kind == DeviceKind::Keyboard,
         // Done in software (gamemode.rs), so any keyboard can have it.
         game_mode: snapshot.kind == DeviceKind::Keyboard,
+        m_keys: handle.supports(features::mkeys::ID),
         wheel: false,
     };
 

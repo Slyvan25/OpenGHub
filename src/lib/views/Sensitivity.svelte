@@ -56,6 +56,20 @@
     });
   });
 
+  // Follow changes made elsewhere — the mouse's own DPI buttons save the
+  // stage they switch to — so the page shows them as they happen.
+  $effect(() => {
+    const saved = configStore.deviceProfile(device.id);
+    const next = saved.dpiStages;
+    const nextActive = next.length ? Math.min(saved.activeStage, next.length - 1) : 0;
+    untrack(() => {
+      if (busy || !next.length) return;
+      if (next.join() !== stages.join()) stages = [...next];
+      if (nextActive !== activeStage) activeStage = nextActive;
+      if ((saved.shiftStage ?? null) !== shiftStage) shiftStage = saved.shiftStage ?? null;
+    });
+  });
+
   /** Four stages spread around the current value, the way G HUB seeds a new profile. */
   function defaultStages(current: number, min: number, max: number): number[] {
     const candidates = [current / 2, current, current * 2, current * 3]
