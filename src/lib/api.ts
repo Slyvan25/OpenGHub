@@ -282,6 +282,8 @@ export const getArtwork = () => call<Record<string, string>>("get_artwork");
 export const getArtworkDir = () => call<string>("get_artwork_dir");
 export const getArtworkLayout = (productIds: number[]) =>
   call<ArtworkLayout | null>("get_artwork_layout", { productIds });
+/** Raw bytes of one artwork file, for origins that cannot use the asset protocol. */
+export const getArtworkBytes = (key: string) => call<ArrayBuffer>("get_artwork_bytes", { key });
 
 // -- G HUB depots ----------------------------------------------------------
 

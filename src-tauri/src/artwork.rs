@@ -69,6 +69,14 @@ fn is_artwork_key(key: &str) -> bool {
 }
 
 /// The `.layout.json` for a product id, parsed, if one was imported.
+/// The bytes of one scanned artwork file, by its key (`c08d`, `c08d-side`).
+/// Only keys the scan produced resolve, so this cannot read outside the
+/// artwork directory.
+pub fn read(key: &str) -> Option<Vec<u8>> {
+    let path = scan().remove(key)?;
+    std::fs::read(path).ok()
+}
+
 pub fn layout_for(product_ids: &[u16]) -> Option<crate::depot::ArtworkLayout> {
     let files = scan();
     for pid in product_ids {

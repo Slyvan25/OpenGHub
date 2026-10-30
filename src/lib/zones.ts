@@ -33,6 +33,9 @@ const BY_PRODUCT: Record<string, Record<string, ZoneSpot>> = {
   "407f": { Primary: { x: 0.3, y: 0.38, r: 0.1 }, Logo: { x: 0.52, y: 0.66, r: 0.2 } },
   c08d: { Primary: { x: 0.3, y: 0.38, r: 0.1 }, Logo: { x: 0.52, y: 0.66, r: 0.2 } },
   c08b: { Primary: { x: 0.3, y: 0.38, r: 0.1 }, Logo: { x: 0.52, y: 0.66, r: 0.2 } },
+  // G502 X PLUS (CDN top-angle render): the RGB strip wraps the heel, the G logo sits on the palm.
+  c095: { Primary: { x: 0.52, y: 0.73, r: 0.14 }, Logo: { x: 0.44, y: 0.59, r: 0.06 } },
+  "4099": { Primary: { x: 0.52, y: 0.73, r: 0.14 }, Logo: { x: 0.44, y: 0.59, r: 0.06 } },
 };
 
 /**
@@ -146,4 +149,40 @@ export function controlSpots(kind: DeviceKind): Record<string, ControlSpot> {
   // layout only, so without one nothing is drawn rather than a mouse's dots.
   if (kind === "wheel") return {};
   return kind === "keyboard" ? KEYBOARD_CONTROLS : MOUSE_CONTROLS;
+}
+
+/**
+ * Button positions drawn for a product's CDN render, for devices whose G HUB
+ * depot cannot be imported. Fractions of the image, like the generic tables.
+ * G502 X PLUS: the top-angle gallery render `fetch-artwork.sh` downloads.
+ * Button numbers follow the device's onboard table (see `G502X` in
+ * Assignments.svelte): 4 = G4 back, 5 = G6 DPI shift, 6 = G5 forward,
+ * 9 = G9, 10 = G8, 11 = G7.
+ */
+const G502X_CONTROLS: Record<string, ControlSpot> = {
+  "button-1": { dot: { x: 0.43, y: 0.25 }, label: { x: 0.04, y: 0.08 }, side: "left" },
+  "button-2": { dot: { x: 0.61, y: 0.25 }, label: { x: 0.96, y: 0.12 }, side: "right" },
+  "button-3": { dot: { x: 0.527, y: 0.3 }, label: { x: 0.527, y: 0.02 }, side: "top" },
+  "button-7": { dot: { x: 0.48, y: 0.29 }, label: { x: 0.04, y: 0.17 }, side: "left" },
+  "button-8": { dot: { x: 0.575, y: 0.29 }, label: { x: 0.96, y: 0.3 }, side: "right" },
+  "button-9": { dot: { x: 0.527, y: 0.47 }, label: { x: 0.96, y: 0.47 }, side: "right" },
+  "button-10": { dot: { x: 0.375, y: 0.26 }, label: { x: 0.04, y: 0.26 }, side: "left" },
+  "button-11": { dot: { x: 0.37, y: 0.32 }, label: { x: 0.04, y: 0.35 }, side: "left" },
+  "button-6": { dot: { x: 0.365, y: 0.4 }, label: { x: 0.04, y: 0.44 }, side: "left" },
+  "button-4": { dot: { x: 0.35, y: 0.455 }, label: { x: 0.04, y: 0.53 }, side: "left" },
+  "button-5": { dot: { x: 0.32, y: 0.54 }, label: { x: 0.04, y: 0.62 }, side: "left" },
+};
+
+const CONTROLS_BY_PRODUCT: Record<string, Record<string, ControlSpot>> = {
+  c095: G502X_CONTROLS,
+  "4099": G502X_CONTROLS,
+};
+
+/** The product's own button positions when drawn for its render, else the category's. */
+export function controlSpotsFor(kind: DeviceKind, productIds: number[]): Record<string, ControlSpot> {
+  for (const id of productIds) {
+    const own = CONTROLS_BY_PRODUCT[id.toString(16).padStart(4, "0")];
+    if (own) return own;
+  }
+  return controlSpots(kind);
 }

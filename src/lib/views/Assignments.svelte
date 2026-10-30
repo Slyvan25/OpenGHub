@@ -18,7 +18,7 @@
   import Icon, { type IconName } from "$lib/components/Icon.svelte";
   import { artworkIds } from "$lib/device-ui";
   import { artwork } from "$lib/stores/artwork.svelte";
-  import { controlSpots, type ControlSpot } from "$lib/zones";
+  import { controlSpotsFor, type ControlSpot } from "$lib/zones";
   import { configStore } from "$lib/stores/config.svelte";
   import { ui } from "$lib/stores/ui.svelte";
   import type { ApplicationCommands, Assignment, Device } from "$lib/types";
@@ -128,14 +128,29 @@
     label: `G${i + 1}`,
     fallback: `F${i + 1}`,
   }));
+  /** The G915 X: G1-G5 down the side, then G6-G9 across the top; unassigned they type F13-F21. */
+  const G915X: Control[] = Array.from({ length: 9 }, (_, i) => ({
+    id: `button-${i + 1}`,
+    label: `G${i + 1}`,
+    fallback: `F${i + 13}`,
+  }));
+  /** The G910: G1-G5 down the side, G6-G9 above the F-keys; unassigned they type F1-F9 (0x8010). */
+  const G910: Control[] = Array.from({ length: 9 }, (_, i) => ({
+    id: `button-${i + 1}`,
+    label: `G${i + 1}`,
+    fallback: `F${i + 1}`,
+  }));
   const MODEL_CONTROLS: Record<number, Control[]> = {
     0xc095: G502X, 0x4099: G502X, 0xc098: G502X, 0xc097: G502X,
     0xc33e: G915, 0x407c: G915, 0xc33f: G915,
+    0xc359: G915X,
+    0xc32b: G910, 0xc335: G910,
   };
 
+  /** This model's own control table, when it has one. */
+  const modelControls = $derived(artworkIds(device).map((id) => MODEL_CONTROLS[id]).find(Boolean) ?? null);
   const controls = $derived(
-    artworkIds(device).map((id) => MODEL_CONTROLS[id]).find(Boolean) ??
-      (device.kind === "keyboard" ? keyboardControls : device.kind === "wheel" ? wheelControls : mouseControls),
+    modelControls ?? (device.kind === "keyboard" ? keyboardControls : device.kind === "wheel" ? wheelControls : mouseControls),
   );
 
   interface Command {
@@ -299,7 +314,7 @@
    * G HUB's M1/M2/M3 on keyboards with M-keys: each keeps its own G-key
    * bindings, stored as `button-1:m2` / `button-1:m3` (M1 has no suffix).
    */
-  const hasMKeys = $derived(controls === G915);
+  const hasMKeys = $derived(controls === G915 || controls === G910);
   let mstate = $state<1 | 2 | 3>(1);
 
   /** Control id as stored for the current layer. */
@@ -596,7 +611,16 @@
    * the per-category guesses apply.
    */
   const spots = $derived.by<Record<string, ControlSpot>>(() => {
-    if (!layoutView) return controlSpots(device.kind);
+    if (!layoutView) {
+      const generic = controlSpotsFor(device.kind, artworkIds(device));
+      // The generic keyboard spots are the Fn+F-key controls; a model with its
+      // own table (a G915's G-keys) takes those positions in order instead.
+      if (modelControls && device.kind === "keyboard") {
+        const positions = Object.values(generic);
+        return Object.fromEntries(modelControls.slice(0, positions.length).map((c, i) => [c.id, positions[i]]));
+      }
+      return generic;
+    }
     const exact: Record<string, ControlSpot> = {};
     if (device.kind === "wheel") {
       if (view === "pedals") return PEDAL_SPOTS;

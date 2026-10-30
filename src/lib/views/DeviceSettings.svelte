@@ -59,7 +59,7 @@
     lowBatteryBrightness: 20,
     leftHanded: false,
   });
-  const SLEEP_OPTIONS = [0, 1, 2, 5, 10, 20, 30, 60];
+  const SLEEP_OPTIONS = [0, 1, 2, 5, 10, 20, 30, 60, 120, 240, 480];
 
   $effect(() => {
     api.getDeviceSettings(device.id).then((s) => (ds = s)).catch(() => {});
@@ -312,7 +312,7 @@
     <section class="card panel">
       <h2 class="section-title">Firmware</h2>
       <dl class="facts">
-        {#each device.firmware as f (f.kind + f.version)}
+        {#each device.firmware as f, i (`${i}:${f.kind}:${f.version}`)}
           <div>
             <dt>{f.kind}{f.active ? " · active" : ""}</dt>
             <dd>{f.version}</dd>
@@ -360,21 +360,25 @@
     </section>
   {/if}
 
-  {#if device.capabilities.onboardMemory}
+  {#if device.capabilities.onboardMemory || device.capabilities.lightingTimers}
     <section class="card panel">
       <h2 class="section-title">Power management</h2>
-      <p class="none">Stored in the device's onboard profile, so it applies with OpenGHub closed too.</p>
-      <div class="field-row">
-        <span class="field-label">Auto sleep after</span>
-        <div class="select">
-          <select value={ds.autoSleepMin} onchange={(e) => saveDs({ autoSleepMin: Number(e.currentTarget.value) })}>
-            {#each SLEEP_OPTIONS as m (m)}
-              <option value={m}>{m === 0 ? "Device default" : `${m} min`}</option>
-            {/each}
-          </select>
-          <Icon name="chevronDown" size={14} />
+      {#if device.capabilities.onboardMemory}
+        <p class="none">Stored in the device's onboard profile, so it applies with OpenGHub closed too.</p>
+        <div class="field-row">
+          <span class="field-label">Auto sleep after</span>
+          <div class="select">
+            <select value={ds.autoSleepMin} onchange={(e) => saveDs({ autoSleepMin: Number(e.currentTarget.value) })}>
+              {#each SLEEP_OPTIONS as m (m)}
+                <option value={m}>{m === 0 ? "Device default" : `${m} min`}</option>
+              {/each}
+            </select>
+            <Icon name="chevronDown" size={14} />
+          </div>
         </div>
-      </div>
+      {:else}
+        <p class="none">Kept by the keyboard until it is unplugged; OpenGHub writes it again whenever the keyboard appears.</p>
+      {/if}
       <div class="field-row">
         <span class="field-label">Inactivity lighting off after</span>
         <div class="select">

@@ -153,6 +153,9 @@ pub struct DeviceProfile {
     /// The keyboard animation, shown when a zone's effect is `animation`.
     #[serde(default)]
     pub animation: Option<crate::animation::Animation>,
+    /// Colour Drift's settings, shown when a zone's effect is `drift`.
+    #[serde(default)]
+    pub drift: Option<crate::animation::Drift>,
     /// Command lighting colours chosen by the user, by command group; an
     /// empty string is G HUB's NO COLOR. Groups not listed use the game's own.
     #[serde(default)]
@@ -534,6 +537,7 @@ mod tests {
                 per_key: Default::default(),
                 game_mode_keys: None,
                 animation: None,
+                drift: None,
                 command_colors: Default::default(),
             },
         );

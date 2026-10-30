@@ -10,6 +10,18 @@ import * as api from "$lib/api";
 import { artworkIds } from "$lib/device-ui";
 import type { ArtworkLayout, Device } from "$lib/types";
 
+const MIME: Record<string, string> = { png: "image/png", webp: "image/webp", jpg: "image/jpeg", jpeg: "image/jpeg" };
+
+function toDataUrl(bytes: ArrayBuffer, path: string): string {
+  const ext = path.split(".").pop()?.toLowerCase() ?? "png";
+  const view = new Uint8Array(bytes);
+  let binary = "";
+  for (let i = 0; i < view.length; i += 0x8000) {
+    binary += String.fromCharCode(...view.subarray(i, i + 0x8000));
+  }
+  return `data:${MIME[ext] ?? "image/png"};base64,${btoa(binary)}`;
+}
+
 class ArtworkStore {
   /** product id (`"c08d"`) → asset URL */
   images = $state<Record<string, string>>({});
@@ -26,9 +38,22 @@ class ArtworkStore {
       const convert = await this.converter();
       const next: Record<string, string> = {};
       const layoutKeys: string[] = [];
+      const imageKeys: [string, string][] = [];
       for (const [key, path] of Object.entries(paths)) {
         if (key.endsWith(".layout")) layoutKeys.push(key.slice(0, -".layout".length));
-        else next[key] = convert(path);
+        else imageKeys.push([key, path]);
+      }
+      if (this.inlineImages()) {
+        // `tauri dev` serves the page from http://localhost, and WebKitGTK
+        // refuses `asset://` URLs from there; pull the bytes over IPC instead.
+        await Promise.all(
+          imageKeys.map(async ([key, path]) => {
+            const bytes = await api.getArtworkBytes(key).catch(() => null);
+            if (bytes) next[key] = toDataUrl(bytes, path);
+          }),
+        );
+      } else {
+        for (const [key, path] of imageKeys) next[key] = convert(path);
       }
       this.images = next;
 
@@ -47,6 +72,11 @@ class ArtworkStore {
     } finally {
       this.loaded = true;
     }
+  }
+
+  /** True when the page's origin cannot load the asset protocol (the dev server). */
+  private inlineImages(): boolean {
+    return api.isTauri && typeof location !== "undefined" && location.protocol.startsWith("http");
   }
 
   /** Outside Tauri there is no asset protocol, so the map stays empty. */

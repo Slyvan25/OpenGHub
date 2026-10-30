@@ -63,18 +63,55 @@ later than 0x8070's) and sets them with `setRgbClusterEffect`, whose payload mat
   intensity) and ripple (`0x0b`, colour and a 2–200 ms rate). Only the horizontal wave direction
   (`1`) is confirmed so far.
 
+### G915 X
+
+The G915 X (`c359` wired) is a `0x8071` keyboard without `0x8100`: no onboard profile to switch,
+so there is no host mode to take — `manageSwControl` alone makes writes show. It differs from
+the G915 in what it advertises:
+
+- Its primary zone lists effects `0x00, 0x01, 0x0a, 0x15, 0x16, 0x17` and the logo
+  `0x00, 0x01, 0x0a, 0x15`: the saturation-bearing variants of cycle, wave and ripple replace
+  `0x03`/`0x04`/`0x0b`. `write_lighting` sends whichever id the zone lists. Their unions (from
+  Solaar's `LEDEffects` table, which OpenRGB also uses): cycle `[_, sat, …, period_be @6, intensity @8]`,
+  wave the same plus `direction @9`, ripple `[r, g, b, sat, _, _, period_be @6]`. The wave's
+  direction codes are 1 right, 2 down, 3 centre out, 6 left, 7 up, 8 centre in.
+- Its lighting timers live in `rgbPowerModeConfig` (fn 7): `[0]` reads, `[1, 0, 0, idle_be,
+  sleep_be]` writes seconds of inactivity before the LEDs dim, then turn off (firmware defaults
+  60 and 300). Any 16-bit value is accepted. They are runtime values — kept while software
+  control comes and goes, lost on a power cycle — so `apply_device_settings` rewrites them on
+  every rescan; the Settings page shows them as "Inactivity lighting off after" via the
+  `lightingTimers` capability.
+- LED ids are the G915's, plus G6–G9 at `0xb9`–`0xbc` (above F1–F4) and the brightness key at
+  `0x99` (above F6); the media keys sit above the numpad. `0x4540` reports the layout code
+  (1 = US), which picks the ANSI or ISO drawing of the map.
+- Its G-keys report through `0x1b10` / `0x8101` rather than `0x8010` / `0x8100`, which OpenGHub
+  does not speak yet, so assignments and macros do not reach them.
+
 ## Per-key lighting, animations and command lighting
 
 `0x8081` sets individual keys: fn 1 takes up to four `[led, r, g, b]`, fn 6 one colour and up to
 13 LED ids, both `0xff`-terminated when shorter; fn 7 commits. The cluster effects are switched
 off first. LED ids on the G915 are `usage − 3` for ordinary keys, `usage − 0x78` for modifiers,
 `0xb3 + n` for G-keys, `0xd2` for the logo, and their own codes for the media keys — the
-numbering OpenRGB documents. `src/lib/keyboards/g915.ts` is OpenGHub's own drawn ISO map.
+numbering OpenRGB documents. `src/lib/keyboards/g915.ts` draws the map — G915 or G915 X, ISO or
+ANSI from the `0x4540` layout code.
+
+The generation before it — G910, G810, G610, G410, G513, PRO — has `0x8080` instead: fn 3 takes
+`[group_be, count_be, (key, r, g, b) × count]`, 14 keys in a very long report or 3 in a long one,
+and fn 5 commits (the packets g810-led sends). Keys are addressed by HID usage in group `0x0001`,
+G-keys 1–9 in group `0x0004`, the logo LEDs 1–2 in group `0x0010`. OpenGHub keeps one byte per
+LED, so for these keyboards the id is the usage, `0xe7 + n` for a logo LED and `0xf0 + n` for a
+G-key (`per_key_v1` in `features.rs`). There is no drawn map: `src/lib/keyboards/layout-map.ts`
+builds one from the imported depot layout, whose `PERKEY_*` zones are one rectangle per key with
+the usage as component id. Verified on a G910 ORION SPECTRUM.
 
 - **Freestyle** paints keys on that map; the colours live in the profile (`perKey`).
 - **Animations** are Freestyle frames played by `animation.rs`: per frame duration, fade or cut,
   cycle / reverse / bounce / random. After the first frame only changed keys are written, which
   keeps a wireless keyboard responsive.
+- **Colour Drift** is generated rather than drawn: every key of the map fades to a random hue of
+  its own, holds, and picks the next (fade and hold times, saturation and brightness are the
+  settings). Written as diffs like an animation, at most ~20 steps a second.
 - **Command lighting** lights a game's command keys (from the application database's keystrokes)
   in their group colours; each group's colour can be overridden or set to none.
 

@@ -47,6 +47,12 @@ tray with profiles and lighting applied. Turning it off removes the file; the to
 the file, so an entry added or removed by hand is respected. *Start minimised to tray* does
 the same for manual launches.
 
+The .deb and .rpm also ship a systemd user unit, `/usr/lib/systemd/user/openghub.service`, for
+anyone who prefers a service: it restarts the app if it crashes and keeps the log in
+`journalctl --user -u openghub`. Turn *Launch at startup* off first, then
+`systemctl --user enable --now openghub` — the unit refuses to start while the autostart entry
+exists, because two instances would fight over the devices.
+
 ## Flatpak
 
 The Flatpak (`packaging/flatpak/io.github.slyvan25.OpenGHub.yml`) is built from the release .deb, so it is

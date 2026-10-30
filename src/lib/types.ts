@@ -59,6 +59,8 @@ export interface Capabilities {
   gameMode?: boolean;
   /** A racing wheel driven through the classic command channel. */
   wheel?: boolean;
+  /** Lighting timers held by the RGB feature (0x8071) rather than an onboard profile. */
+  lightingTimers?: boolean;
 }
 
 export interface FirmwareInfo {
@@ -149,6 +151,8 @@ export interface Device {
   firmware?: FirmwareInfo[];
   wheel?: WheelInfo | null;
   protocolVersion: string;
+  /** Logitech's layout code from 0x4540 (1 = US), when the keyboard reports one. */
+  keyboardLayout?: number | null;
   demo: boolean;
   lastError: string | null;
 }
@@ -181,7 +185,7 @@ export interface FeatureInfo {
 }
 
 export type LightEffectName =
-  | "off" | "fixed" | "breathing" | "cycle" | "wave" | "ripple" | "freestyle" | "animation" | "commands" | "screen" | "audio";
+  | "off" | "fixed" | "breathing" | "cycle" | "wave" | "ripple" | "freestyle" | "animation" | "drift" | "commands" | "screen" | "audio";
 
 /** One animation frame: per-key colours by LED id, and how long it shows. */
 export interface AnimationFrame {
@@ -194,6 +198,18 @@ export interface Animation {
   frames: AnimationFrame[];
   cycle: "cycle" | "reverse" | "bounce" | "random";
   transition: "none" | "fade";
+}
+
+/** Colour Drift: every key fades to a random hue of its own, pauses, and picks the next. */
+export interface Drift {
+  /** LED ids to drive: the keyboard's key map. */
+  keys: number[];
+  fadeMs: number;
+  holdMs: number;
+  /** 0-100 */
+  saturation: number;
+  /** 0-100 */
+  brightness: number;
 }
 
 /** A screen region as fractions of the monitor. */
@@ -287,6 +303,8 @@ export interface DeviceProfile {
   gameModeKeys?: number[] | null;
   /** Keyboard animation, shown when a zone's effect is `animation`. */
   animation?: Animation | null;
+  /** Colour Drift settings, shown when a zone's effect is `drift`. */
+  drift?: Drift | null;
   /** Command lighting colours by group; "" = no colour. */
   commandColors?: Record<string, string>;
 }
@@ -511,7 +529,7 @@ export interface ArtworkView {
   view: "front" | "side" | string;
   width: number;
   height: number;
-  zones: { id: string; locationName: string; x: number; y: number; width: number; height: number }[];
+  zones: { id: string; locationName: string; component?: number | null; x: number; y: number; width: number; height: number }[];
   controls: {
     slotId: string;
     control: string;
@@ -521,6 +539,8 @@ export interface ArtworkView {
     labelY: number;
     side: "left" | "right" | "top";
   }[];
+  /** Every key with its HID++ control id, for keyboards whose depot lists them (G915 X). */
+  keys?: { cid: number; shape: "rect" | "circle" | string; x: number; y: number; width: number; height: number }[];
 }
 
 export interface GhubCacheInfo {

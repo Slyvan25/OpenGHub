@@ -42,6 +42,10 @@ pub struct Capabilities {
     /// A racing wheel driven through the classic command channel.
     #[serde(default)]
     pub wheel: bool,
+    /// Lighting timers held by the RGB feature (0x8071 fn 7) rather than an
+    /// onboard profile — keyboards without 0x8100, like the G915 X.
+    #[serde(default)]
+    pub lighting_timers: bool,
 }
 
 /// Static facts about a wheel, for the Steering Wheel page.
@@ -90,6 +94,10 @@ pub struct DeviceSnapshot {
     #[serde(default)]
     pub wheel: Option<WheelInfo>,
     pub protocol_version: String,
+    /// Logitech's layout code from `0x4540` (1 = US), when the keyboard
+    /// reports one; picks the ISO or ANSI drawing of its key map.
+    #[serde(default)]
+    pub keyboard_layout: Option<u8>,
     /// Set when this entry is synthesised rather than backed by real hardware.
     pub demo: bool,
     /// Last error seen while talking to the device, surfaced as a card badge.
@@ -117,6 +125,7 @@ impl DeviceSnapshot {
             firmware: Vec::new(),
             wheel: None,
             protocol_version: String::new(),
+            keyboard_layout: None,
             demo: false,
             last_error: None,
         }
@@ -229,6 +238,9 @@ struct Inner {
     /// that feature's index. Needed in host mode, which RGB on a G915 is:
     /// there the keys do nothing unless the host acts on them.
     gkey_index: HashMap<String, u8>,
+    /// Keyboards whose G-keys arrive as F13… through the evdev grab (G915 X),
+    /// with the G-key count. Their edges come from `gamemode`, not HID++.
+    evdev_gkeys: HashMap<String, u8>,
     /// Per keyboard: the 0x8020 index, the G-key count, the current M-state
     /// (1-3) and the bindings to rebuild its plan from when M1-M3 is pressed.
     mkeys: HashMap<String, MKeys>,
@@ -273,6 +285,7 @@ impl DeviceManager {
                 snapshots: HashMap::new(),
                 aliases: HashMap::new(),
                 gkey_index: HashMap::new(),
+                evdev_gkeys: HashMap::new(),
                 mkeys: HashMap::new(),
                 order: Vec::new(),
                 demo: false,
@@ -478,6 +491,22 @@ impl DeviceManager {
         inner.with_handle(id, reload_onboard_profile)
     }
 
+    /// Writes the lighting-off timeout (minutes; 0 leaves the firmware's
+    /// value) into the RGB feature's power config (0x8071 fn 7), for
+    /// keyboards without onboard profiles. The dim timer stays as the
+    /// firmware has it, capped at the new lights-off time.
+    pub fn write_rgb_power(&self, id: &str, inactivity_lighting_min: u16) -> Result<()> {
+        let mut inner = self.inner.lock();
+        if inner.demo {
+            return Ok(());
+        }
+        inner.with_handle(id, |h| {
+            let (idle, sleep) = features::read_rgb_power_config(h)?;
+            let sleep = if inactivity_lighting_min == 0 { sleep } else { (inactivity_lighting_min as u32 * 60).min(0xffff) as u16 };
+            features::write_rgb_power_config(h, idle.min(sleep), sleep)
+        })
+    }
+
     /// Writes the DPI ladder and report rate into the onboard profile.
     pub fn write_onboard_dpi(
         &self,
@@ -576,6 +605,19 @@ impl DeviceManager {
             }
             Ok(None) => {}
             Err(e) => log::warn!("{id}: G-keys not taken over: {e}"),
+        }
+
+        // Keyboards whose G-keys are function keys (G915 X: G1–G9 type
+        // F13–F21): the evdev grab in `gamemode` swallows the bound ones and
+        // reports them as G-key edges; unbound ones keep typing their F-key,
+        // so the plan gets no F1..Fn fallback.
+        let fkeys = inner.snapshots.get(id).and_then(|s| crate::gamemode::fkey_gkey_count(s.product_id));
+        if let Some(count) = fkeys.filter(|_| !inner.gkey_index.contains_key(id)) {
+            let plan = Plan::build(assignments, macros, 0);
+            let bound = plan.actions.keys().filter(|b| **b < count).count();
+            report.software |= bound > 0;
+            inner.plans.insert(id.to_string(), plan);
+            inner.evdev_gkeys.insert(id.to_string(), count);
         }
 
         let onboard_chosen = inner.snapshots.get(id).and_then(|s| s.onboard_mode).unwrap_or(false);
@@ -704,6 +746,26 @@ impl DeviceManager {
             }
         }
         Ok(report)
+    }
+
+    /// The evdev codes the keyboard grab should divert as G-keys for a
+    /// function-key G-key keyboard: only keys the plan binds, so the rest keep
+    /// typing their F-key.
+    pub fn evdev_gkey_map(&self, id: &str) -> HashMap<u16, u8> {
+        let inner = self.inner.lock();
+        let Some(count) = inner.evdev_gkeys.get(id).copied() else { return HashMap::new() };
+        let Some(plan) = inner.plans.get(id) else { return HashMap::new() };
+        plan.actions
+            .keys()
+            .filter(|b| **b < count)
+            .map(|b| (crate::gamemode::fkey_gkey_code(*b), *b))
+            .collect()
+    }
+
+    /// Resolves a G-key edge from the evdev grab to its action.
+    pub fn resolve_evdev_gkey(&self, id: &str, button: u8, pressed: bool) -> Option<Action> {
+        let mut inner = self.inner.lock();
+        inner.plans.get_mut(id).and_then(|p| p.resolve(button, pressed))
     }
 
     /// Button edges since the last call, with the action each one maps to.
@@ -849,6 +911,7 @@ impl DeviceManager {
         }
         inner.plans.clear();
         inner.gkey_index.clear();
+        inner.evdev_gkeys.clear();
     }
 
     // -- wheels ---------------------------------------------------------------
@@ -1424,6 +1487,7 @@ impl Inner {
         self.plans.retain(|id, _| seen.contains(id));
         self.spy_index.retain(|id, _| seen.contains(id));
         self.gkey_index.retain(|id, _| seen.contains(id));
+        self.evdev_gkeys.retain(|id, _| seen.contains(id));
         self.onboard_written.retain(|id, _| seen.contains(id));
         self.snapshots.retain(|id, _| seen.contains(id));
         self.aliases.retain(|_, id| seen.contains(id));
@@ -1738,6 +1802,15 @@ fn probe(handle: &mut Handle, snapshot: &mut DeviceSnapshot, endpoint: &hidpp::E
     }
     snapshot.online = true;
     snapshot.demo = false;
+    if handle.supports(features::keyboard_layout::ID) {
+        snapshot.keyboard_layout = features::read_keyboard_layout(handle).ok();
+    }
+
+    // Without onboard profiles the lighting timers live in 0x8071 itself
+    // (G915 X); probe the read so a device that lacks fn 7 does not get the UI.
+    let lighting_timers = handle.supports(features::lighting::ID_RGB_EFFECTS)
+        && !handle.supports(0x8100)
+        && features::read_rgb_power_config(handle).is_ok();
 
     snapshot.capabilities = Capabilities {
         dpi: handle.supports(features::dpi::ID),
@@ -1749,10 +1822,11 @@ fn probe(handle: &mut Handle, snapshot: &mut DeviceSnapshot, endpoint: &hidpp::E
         lighting: handle.supports(features::lighting::ID_COLOR_LED_EFFECTS)
             || handle.supports(features::lighting::ID_RGB_EFFECTS),
         onboard_memory: handle.supports(0x8100),
-        per_key: handle.supports(features::per_key::ID) && snapshot.kind == DeviceKind::Keyboard,
+        per_key: features::supports_per_key(handle) && snapshot.kind == DeviceKind::Keyboard,
         // Done in software (gamemode.rs), so any keyboard can have it.
         game_mode: snapshot.kind == DeviceKind::Keyboard,
         wheel: false,
+        lighting_timers,
     };
 
     read_dynamic_state(handle, snapshot);

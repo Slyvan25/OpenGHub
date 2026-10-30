@@ -276,6 +276,23 @@ struct RawImage {
     assignments: Vec<RawAssignment>,
     #[serde(default)]
     zones: Vec<RawZone>,
+    /// Newer keyboard depots (G915 X) describe every key here: its drawn
+    /// shape and the HID++ control id (`cid`) the firmware knows it by.
+    #[serde(default, rename = "inputRegions")]
+    input_regions: Vec<RawInputRegion>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct RawInputRegion {
+    #[serde(default)]
+    renderings: Vec<RawRendering>,
+    #[serde(default)]
+    inputs: Vec<RawInput>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct RawInput {
+    cid: u16,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -307,6 +324,10 @@ struct RawZone {
 
 #[derive(Debug, Clone, Deserialize)]
 struct RawComponent {
+    /// Per-key depots number their components: the HID usage for keys, the
+    /// G-key number for `PERKEY_GKEY`, the consumer usage for media keys.
+    #[serde(default)]
+    id: Option<u32>,
     #[serde(default)]
     renderings: Vec<RawRendering>,
 }
@@ -317,6 +338,29 @@ struct RawRendering {
     kind: String,
     #[serde(default)]
     rect: Option<RawRect>,
+    #[serde(default)]
+    circle: Option<RawCircle>,
+}
+
+impl RawRendering {
+    /// Bounding box in image pixels, for a rect or a circle.
+    fn bbox(&self) -> Option<(f32, f32, f32, f32)> {
+        match (self.kind.as_str(), &self.rect, &self.circle) {
+            ("rect", Some(r), _) => Some((r.x, r.y, r.width, r.height)),
+            ("circle", _, Some(c)) => Some((c.cx - c.r, c.cy - c.r, 2.0 * c.r, 2.0 * c.r)),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct RawCircle {
+    #[serde(deserialize_with = "num_str")]
+    cx: f32,
+    #[serde(deserialize_with = "num_str")]
+    cy: f32,
+    #[serde(deserialize_with = "num_str")]
+    r: f32,
 }
 
 // The rect values are strings in the wild ("405"), so accept both.
@@ -365,6 +409,23 @@ pub struct ArtworkView {
     pub height: f32,
     pub zones: Vec<ZoneRect>,
     pub controls: Vec<ControlMarker>,
+    /// Every key, for keyboards whose depot lists them (G915 X): where it is
+    /// drawn and the control id the firmware's key customisation uses.
+    #[serde(default)]
+    pub keys: Vec<KeyRegion>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct KeyRegion {
+    /// HID++ control id (`0x1b10` numbering).
+    pub cid: u16,
+    /// `rect` or `circle`; the box is the circle's bounding square.
+    pub shape: String,
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -375,6 +436,11 @@ pub struct ZoneRect {
     /// The HID++ location name it maps to: `Primary`, `Logo`, … from the
     /// device definition's `typeMap`, so it lines up with `getZoneInfo`.
     pub location_name: String,
+    /// The depot's component number inside the zone, when it has one: per-key
+    /// depots use the HID usage (keys), the G-key number (`PERKEY_GKEY`) or
+    /// the consumer usage (media keys).
+    #[serde(default)]
+    pub component: Option<u32>,
     pub x: f32,
     pub y: f32,
     pub width: f32,
@@ -402,6 +468,7 @@ pub fn parse_metadata(
     bytes: &[u8],
     model_id: &str,
     display_name: &str,
+    slot_prefix: &str,
     zone_type_map: &HashMap<String, String>,
 ) -> Result<ArtworkLayout, Error> {
     let raw: RawMetadata = serde_json::from_slice(bytes)
@@ -413,24 +480,62 @@ pub fn parse_metadata(
         .filter(|img| img.key != "wheel_image_base")
         .map(|img| {
             let (w, h) = (img.origin.width.max(1.0), img.origin.height.max(1.0));
-            let zones = img
+            let zones: Vec<ZoneRect> = img
                 .zones
                 .iter()
                 .flat_map(|z| {
-                    z.components.iter().flat_map(|c| c.renderings.iter()).filter_map(|r| {
-                        let rect = r.rect.as_ref().filter(|_| r.kind == "rect")?;
+                    z.components.iter().flat_map(|c| c.renderings.iter().map(move |r| (c.id, r))).filter_map(|(id, r)| {
+                        let (x, y, width, height) = r.bbox()?;
                         Some(ZoneRect {
                             id: z.id.clone(),
                             location_name: zone_location_name(&z.id, zone_type_map),
-                            x: rect.x / w,
-                            y: rect.y / h,
-                            width: rect.width / w,
-                            height: rect.height / h,
+                            component: id,
+                            x: x / w,
+                            y: y / h,
+                            width: width / w,
+                            height: height / h,
                         })
                     })
                 })
                 .collect();
-            let controls = img
+            let keys = img
+                .input_regions
+                .iter()
+                .filter_map(|region| {
+                    let cid = region.inputs.first()?.cid;
+                    let r = region.renderings.first()?;
+                    let (x, y, width, height) = r.bbox()?;
+                    Some(KeyRegion { cid, shape: r.kind.clone(), x: x / w, y: y / h, width: width / w, height: height / h })
+                })
+                .collect();
+            // Per-key depots carry no assignment markers; their G-keys are the
+            // numbered components of `PERKEY_GKEY`, so markers are made from
+            // those: labels in the left margin for keys down the side, above
+            // the render for keys along the top.
+            let prefix = if slot_prefix.is_empty() { model_id.replace('_', "") } else { slot_prefix.to_string() };
+            let synthesised: Vec<ControlMarker> = if img.assignments.is_empty() {
+                zones
+                    .iter()
+                    .filter(|z| z.id == "PERKEY_GKEY")
+                    .filter_map(|z| {
+                        let n = z.component?;
+                        let (cx, cy) = (z.x + z.width / 2.0, z.y + z.height / 2.0);
+                        let left = cx < 0.15;
+                        Some(ControlMarker {
+                            slot_id: format!("{prefix}_g{n}_m1"),
+                            control: format!("button-{n}"),
+                            marker_x: cx,
+                            marker_y: cy,
+                            label_x: if left { -0.06 } else { cx },
+                            label_y: if left { cy } else { -0.05 },
+                            side: if left { "left".into() } else { "top".into() },
+                        })
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let mut controls: Vec<ControlMarker> = img
                 .assignments
                 .iter()
                 .map(|a| {
@@ -452,6 +557,7 @@ pub fn parse_metadata(
                     }
                 })
                 .collect();
+            controls.extend(synthesised);
             ArtworkView {
                 // Wheels name their images differently; the rim over the
                 // base is the front view, the shifter and pedals are views
@@ -467,6 +573,7 @@ pub fn parse_metadata(
                 height: h,
                 zones,
                 controls,
+                keys,
             }
         })
         .collect();
@@ -478,7 +585,12 @@ pub fn parse_metadata(
 /// `features::zone_location_name`.
 fn zone_location_name(zone_id: &str, type_map: &HashMap<String, String>) -> String {
     let mapped = type_map.get(zone_id).map(String::as_str).unwrap_or(zone_id);
-    let base = mapped.strip_prefix("ZONE_").unwrap_or(mapped).to_ascii_lowercase();
+    let mapped = mapped.strip_prefix("ZONE_").unwrap_or(mapped);
+    // G HUB types a per-key keyboard's zones by what the keys do (HID_KEYBOARD,
+    // G_KEY, CONSUMER, INDICATOR...). The hardware has one lighting zone for all
+    // of them — `0x8070`/`0x8071` location Primary — and a second for the logo.
+    let mapped = if zone_id.starts_with("PERKEY_") && !mapped.eq_ignore_ascii_case("LOGO") { "PRIMARY" } else { mapped };
+    let base = mapped.to_ascii_lowercase();
     let mut chars = base.chars();
     match chars.next() {
         Some(first) => first.to_ascii_uppercase().to_string() + chars.as_str(),
@@ -487,8 +599,12 @@ fn zone_location_name(zone_id: &str, type_map: &HashMap<String, String>) -> Stri
 }
 
 /// `g502wireless_g7_m1` → `button-7`; anything unrecognised keeps the slot id.
+///
+/// The first segment is the model prefix and is skipped: a G910's `g910_g1_m1`
+/// would otherwise read as button 910.
 pub fn control_id_for_slot(slot: &str) -> String {
     slot.split('_')
+        .skip(1)
         .find_map(|part| part.strip_prefix('g').and_then(|n| n.parse::<u32>().ok()))
         .map(|n| format!("button-{n}"))
         .unwrap_or_else(|| slot.to_string())
@@ -506,7 +622,9 @@ pub fn fetch_and_unpack(entry: &DepotEntry) -> Result<Vec<(String, Vec<u8>)>, Er
             entry.name, entry.cipher_suite
         )));
     }
-    let mut reader = ureq::get(&entry.url)
+    // Newer depository entries carry a path only.
+    let url = if entry.url.starts_with('/') { format!("https://updates.ghub.logitechg.com{}", entry.url) } else { entry.url.clone() };
+    let mut reader = ureq::get(&url)
         .timeout(std::time::Duration::from_secs(120))
         .call()
         .map_err(|e| Error::other(format!("download of {}: {e}", entry.name)))?
@@ -667,7 +785,7 @@ pub fn import_device_files(
     // Wheel depots use a different metadata schema (zoom regions and slot
     // markers); no layout is not a failure.
     let layout = match get(&metadata) {
-        Some(bytes) => match parse_metadata(bytes, &def.model_id, &def.display_name, &def.zone_type_map) {
+        Some(bytes) => match parse_metadata(bytes, &def.model_id, &def.display_name, &def.slot_prefix, &def.zone_type_map) {
             Ok(l) => Some(l),
             Err(e) => {
                 log::info!("{}: no zone layout in metadata ({e})", def.display_name);
@@ -693,6 +811,13 @@ pub fn import_device_files(
                 .map_err(|e| Error::other(format!("could not write {}: {e}", path.display())))
         };
         if let Some(png) = get(&front) {
+            // The scan keeps whichever `c359.*` it meets first, so an older
+            // render in another format must go.
+            for ext in ["png", "webp", "jpg", "jpeg"] {
+                if ext != ext_of(&front) {
+                    let _ = std::fs::remove_file(dir.join(format!("{key}.{ext}")));
+                }
+            }
             write(&format!(".{}", ext_of(&front)), png)?;
             if !views.contains(&"front".to_string()) {
                 views.push("front".into());
@@ -750,7 +875,14 @@ pub fn import_program_data(root: &Path) -> Result<ImportReport, Error> {
         .map_err(|e| Error::other(format!("current.json is malformed: {e}")))?;
 
     let build_dir = lghub.join("depots").join(&depository.build_id);
-    let defs = load_device_db(&build_dir.join("core"));
+    let mut defs = load_device_db(&build_dir.join("core"));
+    // Devices defined only in the encrypted part of the database still have
+    // plain depots on disk; the built-in definitions name them.
+    for builtin in builtin_defs() {
+        if !defs.iter().any(|d| d.model_id == builtin.model_id) {
+            defs.push(builtin);
+        }
+    }
     if defs.is_empty() {
         return Err(Error::other(format!(
             "no readable device definitions under {}",
@@ -833,9 +965,33 @@ pub fn builtin_defs() -> Vec<DeviceDef> {
         product_ids: pids.to_vec(),
         zone_type_map: Default::default(),
     };
+    // Per-key keyboards: every PERKEY_* zone is the primary zone's keys except
+    // the branding, which is the logo — the two zones `0x8071` reports.
+    let perkey_map = || {
+        [
+            ("PERKEY_BRANDING", "LOGO"),
+            ("PERKEY_KEYBOARD", "PRIMARY"),
+            ("PERKEY_GKEY", "PRIMARY"),
+            ("PERKEY_CONSUMER", "PRIMARY"),
+            ("PERKEY_INDICATOR", "PRIMARY"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
+    };
     vec![
         wheel("g923_ps4", "G923 Racing Wheel", "g923_ps4", &[0xc267, 0xc266]),
         wheel("g923_xbox", "G923 Racing Wheel", "g923_xbox", &[0xc26e, 0xc26d]),
+        DeviceDef {
+            model_id: "g915_x".into(),
+            display_name: "G915 X".into(),
+            depot: "8a4ebfbf-ca9c-434e-91e6-cd6a61a82397".into(),
+            slot_prefix: "g915x".into(),
+            kind: "keyboard".into(),
+            thumbnail: String::new(),
+            product_ids: vec![0xc359],
+            zone_type_map: perkey_map(),
+        },
     ]
 }
 
@@ -853,11 +1009,24 @@ pub fn fetch_for_product_ids(product_ids: &[u16]) -> Result<ImportedDevice, Erro
                 product_ids.iter().map(|p| format!("{p:04x}")).collect::<Vec<_>>().join(", ")
             ))
         })?;
+    // Keyboard definitions name no depot: G HUB picks one per physical layout
+    // (`g910_us`, `g910_uk`, ...). Take whichever the depository has, US first.
+    let depot_name = if def.depot.is_empty() {
+        let prefix = format!("{}_", def.model_id);
+        let mut names: Vec<&str> =
+            depository.depots.iter().map(|d| d.name.as_str()).filter(|n| n.starts_with(&prefix)).collect();
+        names.sort_by_key(|n| (*n != format!("{prefix}us"), n.to_string()));
+        names.first().map(|n| n.to_string()).ok_or_else(|| {
+            Error::other(format!("no depot named {prefix}* in the depository for {}", def.display_name))
+        })?
+    } else {
+        def.depot.clone()
+    };
     let entry = depository
-        .depot(&def.depot)
-        .ok_or_else(|| Error::other(format!("depot '{}' is not in the depository", def.depot)))?;
+        .depot(&depot_name)
+        .ok_or_else(|| Error::other(format!("depot '{depot_name}' is not in the depository")))?;
 
-    log::info!("fetching depot {} ({} bytes) for {}", def.depot, entry.size, def.display_name);
+    log::info!("fetching depot {} ({} bytes) for {}", depot_name, entry.size, def.display_name);
     let files = fetch_and_unpack(entry)?;
 
     // The thumbnail lives in core_assets; fetch that depot's file if we can.
@@ -897,6 +1066,27 @@ fn fetch_thumbnail(depository: &Depository, uri: &str) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn perkey_zones_resolve_to_the_hardware_zones() {
+        // The G910's map from G HUB's device database.
+        let map: HashMap<String, String> = [
+            ("PERKEY_KEYBOARD", "HID_KEYBOARD"),
+            ("PERKEY_GKEY", "G_KEY"),
+            ("PERKEY_BRANDING", "LOGO"),
+            ("ZONE_PRIMARY", "PRIMARY"),
+            ("ZONE_BRANDING", "LOGO"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        assert_eq!(zone_location_name("PERKEY_KEYBOARD", &map), "Primary");
+        assert_eq!(zone_location_name("PERKEY_GKEY", &map), "Primary");
+        assert_eq!(zone_location_name("PERKEY_BRANDING", &map), "Logo");
+        assert_eq!(zone_location_name("ZONE_PRIMARY", &map), "Primary");
+        assert_eq!(zone_location_name("ZONE_BRANDING", &map), "Logo");
+        assert_eq!(zone_location_name("ZONE_FIVE", &HashMap::new()), "Five");
+    }
 
     #[test]
     fn depot_round_trips() {
@@ -963,6 +1153,44 @@ mod tests {
     }
 
     #[test]
+    fn per_key_metadata_yields_keys_and_gkey_markers() {
+        // Trimmed from the G915 X depot: no assignments, every key an input
+        // region with its control id, G-keys as numbered zone components.
+        let json = br#"{"images":[{"key":"device_image","origin":{"width":2048,"height":830},
+          "assignments":[],
+          "inputRegions":[
+            {"interface":"KEYBOARD_KEY","renderings":[{"type":"rect","rect":{"x":284,"y":306,"width":76,"height":78}}],"inputs":[{"cid":246,"category":"KEYBOARD_KEY"}]},
+            {"interface":"KEYBOARD_KEY","renderings":[{"type":"circle","circle":{"cx":328,"cy":247,"r":30}}],"inputs":[{"cid":404,"category":"KEYBOARD_KEY"}]}],
+          "zones":[{"id":"PERKEY_BRANDING","components":[{"id":1,"renderings":[{"type":"rect","rect":{"x":42,"y":211,"width":82,"height":86}}]}]},
+                   {"id":"PERKEY_GKEY","components":[{"id":1,"renderings":[{"type":"rect","rect":{"x":42,"y":410,"width":76,"height":77}}]},
+                                                     {"id":6,"renderings":[{"type":"circle","circle":{"cx":328,"cy":247,"r":30}}]}]}]}]}"#;
+        let map: HashMap<String, String> =
+            [("PERKEY_BRANDING", "LOGO"), ("PERKEY_GKEY", "PRIMARY")].into_iter().map(|(k, v)| (k.into(), v.into())).collect();
+        let layout = parse_metadata(json, "g915_x", "G915 X", "g915x", &map).unwrap();
+        let front = &layout.views[0];
+
+        assert_eq!(front.keys.len(), 2);
+        let f1 = front.keys.iter().find(|k| k.cid == 246).unwrap();
+        assert_eq!(f1.shape, "rect");
+        assert!((f1.x - 284.0 / 2048.0).abs() < 1e-5);
+        let g6 = front.keys.iter().find(|k| k.cid == 404).unwrap();
+        assert_eq!(g6.shape, "circle");
+        assert!((g6.width - 60.0 / 2048.0).abs() < 1e-5, "a circle's box is its diameter");
+
+        assert_eq!(front.zones.iter().find(|z| z.id == "PERKEY_BRANDING").unwrap().location_name, "Logo");
+        assert_eq!(front.zones.iter().find(|z| z.component == Some(6)).unwrap().location_name, "Primary");
+
+        // G-key markers come from the zone components: G1 down the side, G6 on top.
+        assert_eq!(front.controls.len(), 2);
+        let g1 = front.controls.iter().find(|c| c.control == "button-1").unwrap();
+        assert_eq!(g1.slot_id, "g915x_g1_m1");
+        assert_eq!(g1.side, "left");
+        let g6 = front.controls.iter().find(|c| c.control == "button-6").unwrap();
+        assert_eq!(g6.side, "top");
+        assert!((g6.marker_x - 328.0 / 2048.0).abs() < 1e-5);
+    }
+
+    #[test]
     fn metadata_is_normalised_and_mapped_to_hidpp_names() {
         // Trimmed from a real G502 LIGHTSPEED depot.
         let json = br#"{"images":[{"key":"device_image","origin":{"width":1391,"height":2700},
@@ -977,7 +1205,7 @@ mod tests {
         map.insert("ZONE_PRIMARY".into(), "PRIMARY".into());
         map.insert("ZONE_BRANDING".into(), "LOGO".into());
 
-        let layout = parse_metadata(json, "g502_wireless", "G502 LIGHTSPEED", &map).unwrap();
+        let layout = parse_metadata(json, "g502_wireless", "G502 LIGHTSPEED", "g502wireless", &map).unwrap();
         assert_eq!(layout.views.len(), 2);
 
         let front = &layout.views[0];
@@ -1010,6 +1238,8 @@ mod tests {
         assert_eq!(control_id_for_slot("g502wireless_g11_m1"), "button-11");
         assert_eq!(control_id_for_slot("g502wireless_g9_m1_shifted"), "button-9");
         assert_eq!(control_id_for_slot("g502wireless_mouse_settings"), "g502wireless_mouse_settings");
+        assert_eq!(control_id_for_slot("g910_g1_m1"), "button-1", "the model prefix is not a button");
+        assert_eq!(control_id_for_slot("g915x_g6_m1"), "button-6");
     }
 
     #[test]

@@ -609,7 +609,11 @@ pub fn enumerate(api: &HidApi) -> Vec<Endpoint> {
         }
         let usage_page = info.usage_page();
         let iface = info.interface_number();
-        let looks_vendor = usage_page == 0xff00 || (usage_page == 0 && (iface == 1 || iface == 2));
+        // Current devices put HID++ on vendor page 0xff00; the G910 generation
+        // (G910 ORION SPECTRUM, G410, G810, ...) uses Logitech's older gaming
+        // page 0xff43 and shares the interface with keyboard/consumer collections.
+        let looks_vendor =
+            usage_page == 0xff00 || usage_page == 0xff43 || (usage_page == 0 && (iface == 1 || iface == 2));
         if !looks_vendor {
             continue;
         }

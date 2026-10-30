@@ -157,6 +157,13 @@ through `0x8020` fn 0 (`[mask]`) and MR through `0x8030` fn 0. OpenGHub runs the
 with F1–F5 as their defaults, keeps a set of bindings per M-key (`button-N:m2`, `button-N:m3`),
 lights the M-key LED (`0x8020` fn 1 `[mask]`) and hands the keys back on quit.
 
+The G915 X has no `0x8010`: its G1–G9 are plain function keys, F13–F21 (G HUB's "KEYCONTROL"
+remaps them on the host, as it does every other key — its bindings never reach the keyboard, which
+only stores lighting and timers in its `0x8101` profile sectors). OpenGHub handles them through the
+same evdev grab Game Mode uses (`gamemode.rs`): a G-key with a binding is swallowed and reported to
+the button pump as a G-key edge, one without keeps typing its F-key. The grab is exclusive, so a
+keyboard another remapper (keyd, kmonad) holds cannot be taken; that is logged and nothing changes.
+
 **MR** records on the fly: MR (its LED via `0x8030` fn 0), a G-key, the keystrokes, MR again. The
 keystrokes are read from the keyboard's evdev nodes only for the duration of the recording.
 

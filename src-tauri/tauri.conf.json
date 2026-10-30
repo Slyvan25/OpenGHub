@@ -68,7 +68,8 @@
           "pulseaudio-utils"
         ],
         "files": {
-          "/usr/lib/udev/rules.d/70-openghub.rules": "../packaging/70-openghub.rules"
+          "/usr/lib/udev/rules.d/70-openghub.rules": "../packaging/70-openghub.rules",
+        "/usr/lib/systemd/user/openghub.service": "../packaging/openghub.service"
         },
         "postInstallScript": "../packaging/postinstall.sh",
         "section": "utils"
@@ -80,7 +81,8 @@
           "libayatana-appindicator-gtk3"
         ],
         "files": {
-          "/usr/lib/udev/rules.d/70-openghub.rules": "../packaging/70-openghub.rules"
+          "/usr/lib/udev/rules.d/70-openghub.rules": "../packaging/70-openghub.rules",
+        "/usr/lib/systemd/user/openghub.service": "../packaging/openghub.service"
         },
         "postInstallScript": "../packaging/postinstall.sh",
         "epoch": 0,

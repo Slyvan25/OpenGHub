@@ -12,7 +12,9 @@
   import KeyboardMap from "$lib/components/KeyboardMap.svelte";
   import Toggle from "$lib/components/Toggle.svelte";
   import { artworkIds } from "$lib/device-ui";
-  import { G915_IDS, G915_KEYS, G915_SIZE, type Key } from "$lib/keyboards/g915";
+  import { type Key } from "$lib/keyboards/g915";
+  import { keyMapForDevice } from "$lib/keyboards/layout-map";
+  import { artwork } from "$lib/stores/artwork.svelte";
   import type { Device } from "$lib/types";
 
   interface Props {
@@ -23,9 +25,7 @@
   /** Always disabled in Game Mode: both Windows keys and Menu. */
   const FIXED = [0xe3, 0xe7, 0x65];
 
-  const keyMap = $derived(
-    artworkIds(device).some((id) => G915_IDS.includes(id)) ? { keys: G915_KEYS, size: G915_SIZE } : null,
-  );
+  const keyMap = $derived(keyMapForDevice(artworkIds(device), device.keyboardLayout, artwork.layoutFor(artworkIds(device))));
   const on = $derived((configStore.settings.gameModeDevices ?? []).includes(device.id));
   const disabled = $derived(configStore.deviceProfile(device.id).gameModeKeys ?? FIXED);
   const marked = $derived(
