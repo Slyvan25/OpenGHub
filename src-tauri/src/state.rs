@@ -42,6 +42,14 @@ pub struct Capabilities {
     /// A racing wheel driven through the classic command channel.
     #[serde(default)]
     pub wheel: bool,
+    /// G-keys the host can take over (0x8010), as the keyboard counts them.
+    /// The Assignments page offers G1..Gn from this when no model table or
+    /// G HUB layout knows the keyboard.
+    #[serde(default)]
+    pub g_keys: u8,
+    /// M1-M3 (0x8020): G-key bindings are kept per M-key.
+    #[serde(default)]
+    pub m_keys: bool,
 }
 
 /// Static facts about a wheel, for the Steering Wheel page.
@@ -1753,9 +1761,26 @@ fn probe(handle: &mut Handle, snapshot: &mut DeviceSnapshot, endpoint: &hidpp::E
         // Done in software (gamemode.rs), so any keyboard can have it.
         game_mode: snapshot.kind == DeviceKind::Keyboard,
         wheel: false,
+        g_keys: read_gkey_count(handle),
+        m_keys: handle.supports(features::mkeys::ID),
     };
 
     read_dynamic_state(handle, snapshot);
+}
+
+/// How many G-keys `0x8010` reports, or 0 without the feature.
+fn read_gkey_count(handle: &mut Handle) -> u8 {
+    if !handle.supports(features::gkeys::ID) {
+        return 0;
+    }
+    handle
+        .feature_index(features::gkeys::ID)
+        .and_then(|idx| handle.call(idx, features::gkeys::FN_GET_COUNT, &[], ReportKind::Long))
+        .map(|r| r.param(0))
+        .unwrap_or_else(|e| {
+            log::warn!("G-key count not read: {e}");
+            0
+        })
 }
 
 /// The parts that change while the device is plugged in.

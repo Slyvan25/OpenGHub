@@ -141,9 +141,29 @@ export const KEYBOARD_CONTROLS: Record<string, ControlSpot> = Object.fromEntries
   ]),
 );
 
-export function controlSpots(kind: DeviceKind): Record<string, ControlSpot> {
+/**
+ * A keyboard's G-keys as `button-N` (what the G-key handler acts on), down
+ * the left edge where Logitech puts them. Used when no G HUB layout is
+ * imported for the model.
+ */
+function gKeySpots(count: number): Record<string, ControlSpot> {
+  const step = count > 1 ? Math.min(0.13, 0.8 / (count - 1)) : 0;
+  return Object.fromEntries(
+    Array.from({ length: count }, (_, i) => [
+      `button-${i + 1}`,
+      {
+        dot: { x: 0.05, y: 0.3 + i * step * 0.5 },
+        label: { x: 0.04, y: 0.08 + i * step },
+        side: "left" as const,
+      },
+    ]),
+  );
+}
+
+export function controlSpots(kind: DeviceKind, gKeys = 0): Record<string, ControlSpot> {
   // Wheels have no generic geometry: their controls come from the depot
   // layout only, so without one nothing is drawn rather than a mouse's dots.
   if (kind === "wheel") return {};
-  return kind === "keyboard" ? KEYBOARD_CONTROLS : MOUSE_CONTROLS;
+  if (kind === "keyboard") return gKeys > 0 ? gKeySpots(gKeys) : KEYBOARD_CONTROLS;
+  return MOUSE_CONTROLS;
 }

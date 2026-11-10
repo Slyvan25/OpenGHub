@@ -96,5 +96,9 @@ const keys: Key[] = [
 export const G915_KEYS: Key[] = keys;
 export const G915_SIZE = { w: X + 22.5, h: 6.25 };
 
-/** Product ids of keyboards this map fits. */
-export const G915_IDS = [0xc33e, 0x407c, 0xb354];
+/**
+ * Product ids of keyboards this map fits. The G915 X wired (`c359`, #5) is
+ * full size with G1-G5 and a numpad too; its LED ids are assumed to follow
+ * the G915's until someone confirms them on the hardware.
+ */
+export const G915_IDS = [0xc33e, 0x407c, 0xb354, 0xc359];

@@ -29,6 +29,8 @@ const devices: Device[] = [
     zones: 2,
     onboard: true,
     perKey: true,
+    gKeys: 5,
+    mKeys: true,
   }),
   makeDevice("demo-prox2", "PRO X 2 LIGHTSPEED", "headset", 0x0afe, {
     connection: "wireless",
@@ -54,6 +56,8 @@ interface Options {
   wheel?: boolean;
   /** Per-key lighting (and Game Mode, as for any keyboard). */
   perKey?: boolean;
+  gKeys?: number;
+  mKeys?: boolean;
 }
 
 function makeDevice(
@@ -85,6 +89,8 @@ function makeDevice(
       perKey: !!o.perKey,
       gameMode: kind === "keyboard",
       wheel: !!o.wheel,
+      gKeys: o.gKeys ?? 0,
+      mKeys: !!o.mKeys,
     },
     battery:
       o.battery === undefined

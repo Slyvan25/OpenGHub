@@ -118,6 +118,7 @@ pub static KNOWN_DEVICES: &[KnownDevice] = &[
     dev(0xc343, "PRO X TKL", DeviceKind::Keyboard),
     dev(0xc545, "G915 TKL", DeviceKind::Keyboard),
     dev(0x407c, "G915 LIGHTSPEED", DeviceKind::Keyboard),
+    dev(0xc359, "G915 X", DeviceKind::Keyboard),
     dev(0x4097, "PRO X 60", DeviceKind::Keyboard),
 
     // ---- Headsets --------------------------------------------------------

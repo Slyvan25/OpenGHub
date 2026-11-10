@@ -59,6 +59,10 @@ export interface Capabilities {
   gameMode?: boolean;
   /** A racing wheel driven through the classic command channel. */
   wheel?: boolean;
+  /** G-keys the host can take over (0x8010), as the keyboard counts them. */
+  gKeys?: number;
+  /** M1-M3 (0x8020): G-key bindings are kept per M-key. */
+  mKeys?: boolean;
 }
 
 export interface FirmwareInfo {

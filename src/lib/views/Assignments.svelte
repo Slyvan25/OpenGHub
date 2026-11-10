@@ -133,9 +133,24 @@
     0xc33e: G915, 0x407c: G915, 0xc33f: G915,
   };
 
+  /** G1..Gn for a keyboard no model table knows, from the count it reports (0x8010). */
+  function gKeyControls(count: number): Control[] {
+    return Array.from({ length: count }, (_, i) => ({
+      id: `button-${i + 1}`,
+      label: `G${i + 1}`,
+      fallback: i < 12 ? `F${i + 1}` : "Unassigned",
+    }));
+  }
+
   const controls = $derived(
     artworkIds(device).map((id) => MODEL_CONTROLS[id]).find(Boolean) ??
-      (device.kind === "keyboard" ? keyboardControls : device.kind === "wheel" ? wheelControls : mouseControls),
+      (device.kind === "keyboard"
+        ? device.capabilities.gKeys
+          ? gKeyControls(device.capabilities.gKeys)
+          : keyboardControls
+        : device.kind === "wheel"
+          ? wheelControls
+          : mouseControls),
   );
 
   interface Command {
@@ -299,7 +314,7 @@
    * G HUB's M1/M2/M3 on keyboards with M-keys: each keeps its own G-key
    * bindings, stored as `button-1:m2` / `button-1:m3` (M1 has no suffix).
    */
-  const hasMKeys = $derived(controls === G915);
+  const hasMKeys = $derived(device.capabilities.mKeys ?? controls === G915);
   let mstate = $state<1 | 2 | 3>(1);
 
   /** Control id as stored for the current layer. */
@@ -596,7 +611,7 @@
    * the per-category guesses apply.
    */
   const spots = $derived.by<Record<string, ControlSpot>>(() => {
-    if (!layoutView) return controlSpots(device.kind);
+    if (!layoutView) return controlSpots(device.kind, device.capabilities.gKeys ?? 0);
     const exact: Record<string, ControlSpot> = {};
     if (device.kind === "wheel") {
       if (view === "pedals") return PEDAL_SPOTS;
