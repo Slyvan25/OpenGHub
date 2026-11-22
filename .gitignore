@@ -12,3 +12,7 @@ vite.config.ts.timestamp-*
 # Rust / Tauri
 /src-tauri/target
 /src-tauri/gen
+
+# Nix
+/result
+/result-*

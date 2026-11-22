@@ -33,11 +33,23 @@ Grab the package for your distribution from the [latest release](https://github.
 | Fedora, openSUSE, RHEL | `OpenGHub-x.y.z-1.x86_64.rpm` | `sudo dnf install ./OpenGHub-*.rpm` |
 | Arch, Manjaro, EndeavourOS | `PKGBUILD` | `makepkg -si` in a folder with the PKGBUILD (AUR: `openghub-bin`) |
 | Flatpak (any distribution) | `OpenGHub_x.y.z.flatpak` | `flatpak install --user OpenGHub_*.flatpak` |
+| NixOS, Nix | `flake.nix` in this repository | `nix run github:Slyvan25/OpenGHub`, or the NixOS module below |
 | Anything else | `OpenGHub_x.y.z_amd64.AppImage` | `chmod +x OpenGHub_*.AppImage && ./OpenGHub_*.AppImage` |
 
 The .deb and .rpm install the udev rule that lets you talk to the devices. The Flatpak, the AppImage and a build from source offer to install it the first time you start the app — your desktop asks for your password once, nothing else to configure. Details in [docs/permissions.md](docs/permissions.md).
 
 Optional, for the LIGHTSYNC software effects: `gstreamer1.0-tools` + `gstreamer1.0-pipewire` (screen sampler) and `pulseaudio-utils` (audio visualizer).
+
+On NixOS, add the flake as an input and enable its module. The module installs the app and the udev rule, so the first-start prompt does not appear. The Nix package brings GStreamer, the PipeWire plugin and `parec` with it, so the software effects need nothing else.
+
+```nix
+# flake.nix
+inputs.openghub.url = "github:Slyvan25/OpenGHub";
+
+# configuration.nix, with the flake's inputs passed in
+imports = [ inputs.openghub.nixosModules.default ];
+programs.openghub.enable = true;
+```
 
 ## What you get
 
