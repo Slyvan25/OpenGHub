@@ -6,8 +6,8 @@
  * enough to read at a glance: a G502's logo glow lands on the palm, its primary
  * glow on the scroll wheel — which is what the real mouse does.
  *
- * Coordinates are fractions of the art box, so they hold at any size and work
- * for both the SVG drawing and a user-supplied photo.
+ * Coordinates are fractions of the device image (the photo when there is one),
+ * so they hold at any window size.
  */
 import type { DeviceKind } from "$lib/types";
 
@@ -32,7 +32,8 @@ const BY_PRODUCT: Record<string, Record<string, ZoneSpot>> = {
   // G502 LIGHTSPEED / HERO / X — DPI LEDs on the left flank, G logo on the palm.
   "407f": { Primary: { x: 0.3, y: 0.38, r: 0.1 }, Logo: { x: 0.52, y: 0.66, r: 0.2 } },
   c08d: { Primary: { x: 0.3, y: 0.38, r: 0.1 }, Logo: { x: 0.52, y: 0.66, r: 0.2 } },
-  c08b: { Primary: { x: 0.3, y: 0.38, r: 0.1 }, Logo: { x: 0.52, y: 0.66, r: 0.2 } },
+  // On the top view from scripts/fetch-artwork.sh.
+  c08b: { Primary: { x: 0.23, y: 0.49, r: 0.07 }, Logo: { x: 0.42, y: 0.69, r: 0.14 } },
 };
 
 /**
