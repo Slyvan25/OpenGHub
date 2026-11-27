@@ -189,7 +189,14 @@
       bind:clientWidth={boxW}
       bind:clientHeight={boxH}
     >
-      <img src={photo} alt="" class="photo" onerror={() => (imageFailed = true)} />
+      <img
+        src={photo}
+        alt=""
+        class="photo"
+        draggable="false"
+        oncontextmenu={(e) => e.preventDefault()}
+        onerror={() => (imageFailed = true)}
+      />
       {#each litZones as zone (zone.index)}
         {#if zone.rect && layoutView}
           <!--
