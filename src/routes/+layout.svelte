@@ -13,6 +13,7 @@
   import TopBar from "$lib/components/TopBar.svelte";
   import { page } from "$app/state";
   import { goto } from "$app/navigation";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
 
   let { children } = $props();
 
@@ -34,6 +35,9 @@
     splash.classList.add("done");
     setTimeout(() => splash.remove(), 400);
   }
+
+  // No native frame, so the edges have to start the resize themselves.
+  const edges = ["North", "South", "East", "West", "NorthEast", "NorthWest", "SouthEast", "SouthWest"] as const;
 
   api.installErrorForwarding();
 
@@ -89,6 +93,16 @@
   </main>
 </div>
 
+{#if api.isTauri}
+  {#each edges as dir (dir)}
+    <div
+      class="edge {dir}"
+      aria-hidden="true"
+      onpointerdown={(e) => e.button === 0 && getCurrentWindow().startResizeDragging(dir)}
+    ></div>
+  {/each}
+{/if}
+
 <PermissionsSetup />
 <Toasts />
 
@@ -107,6 +121,75 @@
     overflow-x: hidden;
     display: flex;
     flex-direction: column;
+  }
+
+  .edge {
+    position: fixed;
+    z-index: 1000;
+  }
+
+  .North,
+  .South {
+    left: 10px;
+    right: 10px;
+    height: 6px;
+    cursor: ns-resize;
+  }
+
+  .North {
+    top: 0;
+  }
+
+  .South {
+    bottom: 0;
+  }
+
+  .East,
+  .West {
+    top: 10px;
+    bottom: 10px;
+    width: 6px;
+    cursor: ew-resize;
+  }
+
+  .East {
+    right: 0;
+  }
+
+  .West {
+    left: 0;
+  }
+
+  .NorthEast,
+  .NorthWest,
+  .SouthEast,
+  .SouthWest {
+    width: 12px;
+    height: 12px;
+  }
+
+  .NorthWest {
+    top: 0;
+    left: 0;
+    cursor: nwse-resize;
+  }
+
+  .SouthEast {
+    bottom: 0;
+    right: 0;
+    cursor: nwse-resize;
+  }
+
+  .NorthEast {
+    top: 0;
+    right: 0;
+    cursor: nesw-resize;
+  }
+
+  .SouthWest {
+    bottom: 0;
+    left: 0;
+    cursor: nesw-resize;
   }
 
   main > :global(*) {
