@@ -8,8 +8,6 @@
 //! builds is removed at the same time (a `99-` file is tagged too late for
 //! systemd's `73-seat-late.rules` to apply the ACL).
 
-use std::path::Path;
-
 use serde::Serialize;
 
 use crate::hidpp::{Error, Result};
@@ -41,11 +39,11 @@ pub fn status() -> UdevRuleStatus {
     // /etc overrides /usr/lib for the same file name, so check it first.
     let found = [RULE_PATH, PACKAGED_RULE_PATH]
         .into_iter()
-        .find_map(|p| std::fs::read_to_string(p).ok().map(|s| (p, s)));
+        .find_map(|p| read_host(p).map(|s| (p, s)));
     UdevRuleStatus {
         installed: found.is_some(),
         current: found.as_ref().map(|(_, s)| normalise(s) == normalise(RULE)).unwrap_or(false),
-        stale: Path::new(STALE_RULE_PATH).exists(),
+        stale: read_host(STALE_RULE_PATH).is_some(),
         can_install: crate::sandbox::host_has("pkexec"),
         path: found.as_ref().map(|(p, _)| p.to_string()).unwrap_or_else(|| RULE_PATH.into()),
     }
@@ -85,10 +83,19 @@ pub fn install() -> Result<UdevRuleStatus> {
         }
     }
     let s = status();
-    if !s.current && !crate::sandbox::in_flatpak() {
+    if !s.current {
         return Err(Error::other("the rule was written but does not read back as expected"));
     }
     Ok(s)
+}
+
+/// The sandbox has its own /etc, so a Flatpak build reads the host's through `cat`.
+fn read_host(path: &str) -> Option<String> {
+    if !crate::sandbox::in_flatpak() {
+        return std::fs::read_to_string(path).ok();
+    }
+    let out = crate::sandbox::host_command("cat", &[]).arg(path).output().ok()?;
+    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 fn base64_encode(data: &[u8]) -> String {
