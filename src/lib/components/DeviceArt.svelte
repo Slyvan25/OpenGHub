@@ -120,7 +120,8 @@
   // fractions of the *image*, so they are mapped into that sub-rectangle.
   // Note CSS percentage padding is relative to the box *width* on every side.
   const PAD = $derived(className.includes("tight") ? 0 : 0.04);
-  const imgAspect = $derived(layoutView ? layoutView.width / layoutView.height : 1);
+  let photoAspect = $state(1);
+  const imgAspect = $derived(layoutView ? layoutView.width / layoutView.height : photoAspect);
   const geom = $derived.by(() => {
     const pad = PAD * boxW;
     const innerW = Math.max(1, boxW - 2 * pad);
@@ -147,8 +148,8 @@
   function moveZone(event: PointerEvent, index: number, spot: ZoneSpot) {
     if (!artBox) return;
     const rect = artBox.getBoundingClientRect();
-    const x = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
-    const y = Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height));
+    const x = Math.min(1, Math.max(0, (((event.clientX - rect.left) / rect.width) * 100 - imgLeft) / imgW));
+    const y = Math.min(1, Math.max(0, (((event.clientY - rect.top) / rect.height) * 100 - imgTop) / imgH));
     onzonemove?.(index, { ...spot, x, y });
   }
 
@@ -189,7 +190,18 @@
       bind:clientWidth={boxW}
       bind:clientHeight={boxH}
     >
-      <img src={photo} alt="" class="photo" onerror={() => (imageFailed = true)} />
+      <img
+        src={photo}
+        alt=""
+        class="photo"
+        draggable="false"
+        onload={(e) => {
+          const img = e.currentTarget as HTMLImageElement;
+          photoAspect = img.naturalWidth / Math.max(1, img.naturalHeight);
+        }}
+        oncontextmenu={(e) => e.preventDefault()}
+        onerror={() => (imageFailed = true)}
+      />
       {#each litZones as zone (zone.index)}
         {#if zone.rect && layoutView}
           <!--
@@ -226,10 +238,10 @@
           <div
             class="zone-glow"
             style="
-              left: {zone.spot.x * 100}%;
-              top: {zone.spot.y * 100}%;
-              width: {zone.spot.r * 200}%;
-              padding-bottom: {zone.spot.r * 200}%;
+              left: {imgLeft + zone.spot.x * imgW}%;
+              top: {imgTop + zone.spot.y * imgH}%;
+              width: {zone.spot.r * 2 * imgW}%;
+              padding-bottom: {zone.spot.r * 2 * imgW}%;
               background: radial-gradient(closest-side, {zone.color ?? '#888'} 0%, {zone.color ?? '#888'}80 45%, transparent 72%);
               opacity: {editZones && !zone.color ? 0.3 : 0.35 + (zone.brightness / 100) * 0.65};
             "
@@ -239,7 +251,7 @@
           <button
             class="zone-handle"
             class:dragging={dragging === zone.index}
-            style="left: {zone.spot.x * 100}%; top: {zone.spot.y * 100}%"
+            style="left: {imgLeft + zone.spot.x * imgW}%; top: {imgTop + zone.spot.y * imgH}%"
             aria-label="Move the {zone.locationName} zone"
             onpointerdown={(e) => {
               (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
@@ -536,6 +548,7 @@
 
   .zone-glow {
     position: absolute;
+    z-index: 26;
     transform: translate(-50%, -50%);
     height: 0;
     border-radius: 50%;
@@ -548,6 +561,7 @@
 
   .zone-mask {
     position: absolute;
+    z-index: 26;
     inset: 4%;
     pointer-events: none;
     /* `contain` + centre matches how the base render is laid out, so the mask
@@ -564,6 +578,7 @@
 
   .zone-rect {
     position: absolute;
+    z-index: 26;
     pointer-events: none;
     border-radius: 18%;
     filter: blur(6px);
@@ -573,6 +588,7 @@
 
   .zone-handle {
     position: absolute;
+    z-index: 27;
     transform: translate(-50%, -50%);
     padding: 3px 9px;
     border: 1px solid var(--cyan);

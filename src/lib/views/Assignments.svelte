@@ -18,7 +18,7 @@
   import Icon, { type IconName } from "$lib/components/Icon.svelte";
   import { artworkIds } from "$lib/device-ui";
   import { artwork } from "$lib/stores/artwork.svelte";
-  import { controlSpots, type ControlSpot } from "$lib/zones";
+  import { controlSpots, G502_HERO_SIDE_SPOTS, G502_HERO_SPOTS, G502_HERO_THUMB_SPOTS, type ControlSpot } from "$lib/zones";
   import { configStore } from "$lib/stores/config.svelte";
   import { ui } from "$lib/stores/ui.svelte";
   import type { ApplicationCommands, Assignment, Device } from "$lib/types";
@@ -123,6 +123,20 @@
     { id: "button-10", label: "G8", fallback: "DPI Up" },
     { id: "button-11", label: "G7", fallback: "DPI Down" },
   ];
+  // Order taken from the factory profile in the mouse's ROM.
+  const G502_HERO: Control[] = [
+    { id: "button-1", label: "Left click", fallback: "Primary Click" },
+    { id: "button-2", label: "Right click", fallback: "Secondary Click" },
+    { id: "button-3", label: "Middle click", fallback: "Middle Click" },
+    { id: "button-4", label: "G4", fallback: "Back" },
+    { id: "button-5", label: "G5", fallback: "Forward" },
+    { id: "button-6", label: "G6", fallback: "DPI Shift" },
+    { id: "button-7", label: "G7", fallback: "DPI Down" },
+    { id: "button-8", label: "G8", fallback: "DPI Up" },
+    { id: "button-9", label: "G9", fallback: "Profile Cycle" },
+    { id: "button-10", label: "Scroll right", fallback: "Scroll Right" },
+    { id: "button-11", label: "Scroll left", fallback: "Scroll Left" },
+  ];
   const G915: Control[] = Array.from({ length: 5 }, (_, i) => ({
     id: `button-${i + 1}`,
     label: `G${i + 1}`,
@@ -131,6 +145,14 @@
   const MODEL_CONTROLS: Record<number, Control[]> = {
     0xc095: G502X, 0x4099: G502X, 0xc098: G502X, 0xc097: G502X,
     0xc33e: G915, 0x407c: G915, 0xc33f: G915,
+    0xc08b: G502_HERO,
+  };
+  // Used when no G HUB layout is imported. `thumbs` joins the front view when there is no side image.
+  const MODEL_SPOTS: Record<
+    number,
+    { front: Record<string, ControlSpot>; side?: Record<string, ControlSpot>; thumbs?: Record<string, ControlSpot> }
+  > = {
+    0xc08b: { front: G502_HERO_SPOTS, side: G502_HERO_SIDE_SPOTS, thumbs: G502_HERO_THUMB_SPOTS },
   };
 
   /** G1..Gn for a keyboard no model table knows, from the count it reports (0x8010). */
@@ -594,7 +616,11 @@
   type View = "front" | "side" | "shifter" | "pedals";
   /** `front` / `side` for mice, plus a wheel's `shifter` and `pedals`. */
   let view = $state<View>("front");
-  const views = $derived<View[]>((layout?.views.map((v) => v.view) as View[] | undefined) ?? ["front"]);
+  const modelSpots = $derived(artworkIds(device).map((id) => MODEL_SPOTS[id]).find(Boolean));
+  const views = $derived<View[]>(
+    (layout?.views.map((v) => v.view) as View[] | undefined) ??
+      (modelSpots?.side && artwork.sideFor(artworkIds(device)) ? ["front", "side"] : ["front"]),
+  );
   const layoutView = $derived(layout?.views.find((v) => v.view === view) ?? null);
   const viewLabels: Record<View, string> = { front: "Wheel", side: "Side", shifter: "Shifter", pedals: "Pedals" };
 
@@ -611,7 +637,13 @@
    * the per-category guesses apply.
    */
   const spots = $derived.by<Record<string, ControlSpot>>(() => {
-    if (!layoutView) return controlSpots(device.kind, device.capabilities.gKeys ?? 0);
+    if (!layoutView)
+      return (
+        (view === "side"
+          ? modelSpots?.side
+          : modelSpots && (views.includes("side") ? modelSpots.front : { ...modelSpots.front, ...modelSpots.thumbs })) ??
+        controlSpots(device.kind, device.capabilities.gKeys ?? 0)
+      );
     const exact: Record<string, ControlSpot> = {};
     if (device.kind === "wheel") {
       if (view === "pedals") return PEDAL_SPOTS;
@@ -660,7 +692,8 @@
   // so the overlay is sized to the image's letterboxed rectangle, not the box.
   let boxW = $state(1);
   let boxH = $state(1);
-  const imgAspect = $derived(layoutView ? layoutView.width / layoutView.height : 0.6);
+  // Without a layout, side views are fetched padded to 3:2 and front views to 3:5.
+  const imgAspect = $derived(layoutView ? layoutView.width / layoutView.height : view === "side" ? 1.5 : 0.6);
   const imgRect = $derived.by(() => {
     // Leave room either side for labels: the image gets the middle 56%.
     const availW = boxW * 0.56;
@@ -917,7 +950,9 @@
         onpointerdown={(e) => beginDrag(e, { command: item }, item.label)}
         onclick={() => !suppressClick && assign(selected, item)}
       >
-        <span class="command-key">{prettyKeys(item.value)}</span>
+        {#if item.category === "command"}
+          <span class="command-key">{prettyKeys(item.value)}</span>
+        {/if}
         <span class="command-name">{item.label}</span>
       </button>
     {/each}
@@ -1302,13 +1337,14 @@
   }
 
   .lines line {
-    stroke: var(--line-strong);
-    stroke-width: 0.18;
+    stroke: var(--text-dim);
+    stroke-width: 1.5;
     vector-effect: non-scaling-stroke;
   }
 
   .lines line.active {
     stroke: var(--cyan);
+    stroke-width: 2;
   }
 
   .dot {

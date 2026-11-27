@@ -6,8 +6,8 @@
  * enough to read at a glance: a G502's logo glow lands on the palm, its primary
  * glow on the scroll wheel — which is what the real mouse does.
  *
- * Coordinates are fractions of the art box, so they hold at any size and work
- * for both the SVG drawing and a user-supplied photo.
+ * Coordinates are fractions of the device image (the photo when there is one),
+ * so they hold at any window size.
  */
 import type { DeviceKind } from "$lib/types";
 
@@ -32,7 +32,8 @@ const BY_PRODUCT: Record<string, Record<string, ZoneSpot>> = {
   // G502 LIGHTSPEED / HERO / X — DPI LEDs on the left flank, G logo on the palm.
   "407f": { Primary: { x: 0.3, y: 0.38, r: 0.1 }, Logo: { x: 0.52, y: 0.66, r: 0.2 } },
   c08d: { Primary: { x: 0.3, y: 0.38, r: 0.1 }, Logo: { x: 0.52, y: 0.66, r: 0.2 } },
-  c08b: { Primary: { x: 0.3, y: 0.38, r: 0.1 }, Logo: { x: 0.52, y: 0.66, r: 0.2 } },
+  // On the top view from scripts/fetch-artwork.sh.
+  c08b: { Primary: { x: 0.23, y: 0.49, r: 0.07 }, Logo: { x: 0.42, y: 0.69, r: 0.14 } },
 };
 
 /**
@@ -128,6 +129,32 @@ export const MOUSE_CONTROLS: Record<string, ControlSpot> = {
   "button-6": { dot: { x: 0.5, y: 0.45 }, label: { x: 0.96, y: 0.4 }, side: "right" },
   "wheel-left": { dot: { x: 0.43, y: 0.33 }, label: { x: 0.04, y: 0.6 }, side: "left" },
   "wheel-right": { dot: { x: 0.57, y: 0.33 }, label: { x: 0.96, y: 0.6 }, side: "right" },
+};
+
+/** G502 HERO buttons on the top view that scripts/fetch-artwork.sh saves. */
+export const G502_HERO_SPOTS: Record<string, ControlSpot> = {
+  "button-1": { dot: { x: 0.38, y: 0.22 }, label: { x: -0.06, y: 0.06 }, side: "left" },
+  "button-11": { dot: { x: 0.45, y: 0.29 }, label: { x: -0.06, y: 0.16 }, side: "left" },
+  "button-8": { dot: { x: 0.25, y: 0.27 }, label: { x: -0.06, y: 0.26 }, side: "left" },
+  "button-7": { dot: { x: 0.26, y: 0.33 }, label: { x: -0.06, y: 0.36 }, side: "left" },
+  "button-3": { dot: { x: 0.57, y: 0.27 }, label: { x: 0.57, y: -0.05 }, side: "top" },
+  "button-2": { dot: { x: 0.75, y: 0.22 }, label: { x: 1.06, y: 0.12 }, side: "right" },
+  "button-10": { dot: { x: 0.69, y: 0.29 }, label: { x: 1.06, y: 0.28 }, side: "right" },
+  "button-9": { dot: { x: 0.57, y: 0.49 }, label: { x: 1.06, y: 0.48 }, side: "right" },
+};
+
+/** Thumb buttons on the top view, for when there is no side view. */
+export const G502_HERO_THUMB_SPOTS: Record<string, ControlSpot> = {
+  "button-5": { dot: { x: 0.17, y: 0.43 }, label: { x: -0.06, y: 0.46 }, side: "left" },
+  "button-4": { dot: { x: 0.19, y: 0.55 }, label: { x: -0.06, y: 0.56 }, side: "left" },
+  "button-6": { dot: { x: 0.08, y: 0.6 }, label: { x: -0.06, y: 0.66 }, side: "left" },
+};
+
+/** The thumb buttons on the side view from the same script. */
+export const G502_HERO_SIDE_SPOTS: Record<string, ControlSpot> = {
+  "button-5": { dot: { x: 0.51, y: 0.47 }, label: { x: -0.06, y: 0.4 }, side: "left" },
+  "button-6": { dot: { x: 0.43, y: 0.61 }, label: { x: -0.06, y: 0.6 }, side: "left" },
+  "button-4": { dot: { x: 0.66, y: 0.44 }, label: { x: 1.06, y: 0.44 }, side: "right" },
 };
 
 export const KEYBOARD_CONTROLS: Record<string, ControlSpot> = Object.fromEntries(

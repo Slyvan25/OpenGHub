@@ -26,12 +26,22 @@ DEST="${OPENGHUB_ARTWORK_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/openghub/devi
 CDN="https://resource.logitechg.com"
 # Cloudinary transform: cap the width, keep transparency, force PNG.
 TRANSFORM="w_1200,c_limit,q_auto,f_png/d_transparent.gif"
+# Top views, trimmed and padded to the 3:5 box the assignments page draws in,
+# so its button markers line up.
+TOP_TRANSFORM="e_trim/c_pad,h_1000,ar_0.6,b_transparent,q_auto,f_png/d_transparent.gif"
+declare -A TOP=(
+  [c08b]="g502-hero/g502-hero-gallery-2.png"
+)
+# Side views, saved as <id>-side.png, padded to 3:2.
+SIDE_TRANSFORM="e_trim/c_pad,w_1200,ar_1.5,b_transparent,q_auto,f_png/d_transparent.gif"
+declare -A SIDE=(
+  [c08b]="g502-hero/g502-hero-gallery-3.png"
+)
 
 # product id -> path under /content/dam/gaming/en/products/
 declare -A ART=(
   [c08d]="g502-lightspeed-gaming-mouse/g502-lightspeed-gallery-1.png"
   [407f]="g502-lightspeed-gaming-mouse/g502-lightspeed-gallery-1.png"
-  [c08b]="g502-hero-gaming-mouse/g502-hero-gallery-1.png"
   [c097]="g502-x-gaming-mouse/g502-x-black-gallery-1.png"
   [c098]="g502-x-plus-gaming-mouse/g502-x-plus-black-gallery-1.png"
   [c095]="g502x-plus/2026-update/gallery/g502-x-plus-top-angle-black-gallery-1.png"
@@ -110,7 +120,12 @@ echo "Saving to $DEST"
 missing=()
 for id in "${ids[@]}"; do
   id="${id,,}"
-  if [[ -n "${ART[$id]:-}" ]]; then
+  if [[ -n "${TOP[$id]:-}" ]]; then
+    download "$id" "$CDN/$TOP_TRANSFORM/content/dam/gaming/en/products/${TOP[$id]}" || missing+=("$id")
+    if [[ -n "${SIDE[$id]:-}" ]]; then
+      download "$id-side" "$CDN/$SIDE_TRANSFORM/content/dam/gaming/en/products/${SIDE[$id]}" || true
+    fi
+  elif [[ -n "${ART[$id]:-}" ]]; then
     download "$id" "$CDN/$TRANSFORM/content/dam/gaming/en/products/${ART[$id]}" || missing+=("$id")
   else
     printf '  %-6s not in the table\n' "$id"

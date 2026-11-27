@@ -46,6 +46,15 @@ pub fn run() {
     appimage_webkit_workarounds();
 
     tauri::Builder::default()
+        // A second launch only brings the running window back: two instances
+        // would fight over the same hidraw devices.
+        .plugin(tauri_plugin_single_instance::init(|app, _, _| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.show();
+                let _ = w.unminimize();
+                let _ = w.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(DeviceManager::new())
@@ -222,8 +231,15 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
         .ok()
         .or_else(|| app.default_window_icon().cloned())
         .ok_or_else(|| tauri::Error::AssetNotFound("tray icon".into()))?;
-    TrayIconBuilder::with_id("main")
-        .icon(tray_icon)
+    let mut tray = TrayIconBuilder::with_id("main");
+    // The icon is handed to the panel as a file path. The sandbox's own
+    // runtime dir is invisible to the host; this subfolder is shared.
+    if sandbox::in_flatpak() {
+        if let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR") {
+            tray = tray.temp_dir_path(std::path::Path::new(&dir).join("app").join(sandbox::APP_ID));
+        }
+    }
+    tray.icon(tray_icon)
         .tooltip("OpenGHub")
         .menu(&menu)
         .show_menu_on_left_click(true)
