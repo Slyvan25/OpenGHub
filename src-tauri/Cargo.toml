@@ -20,6 +20,7 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["protocol-asset", "tray-icon", "image-png"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
+tauri-plugin-single-instance = "2"
 
 # HID transport. The `linux-static-hidraw` default feature builds the vendored
 # hidraw backend, so the only system requirement on Linux is libudev.

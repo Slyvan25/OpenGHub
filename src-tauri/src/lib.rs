@@ -46,6 +46,15 @@ pub fn run() {
     appimage_webkit_workarounds();
 
     tauri::Builder::default()
+        // A second launch only brings the running window back: two instances
+        // would fight over the same hidraw devices.
+        .plugin(tauri_plugin_single_instance::init(|app, _, _| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.show();
+                let _ = w.unminimize();
+                let _ = w.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(DeviceManager::new())
